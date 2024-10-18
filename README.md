@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # scODIN: Optimized Detection and Inference of Names in scRNA-seq data
 
 `scODIN` is an R package designed for analyzing single-cell RNA sequencing (scRNA-seq) data using the scODIN scoring method. It provides tools for scoring cell types based on priority genes, clustering, simplifying labels, downsampling, and performing k-Nearest Neighbors (kNN) classification
@@ -299,3 +300,6 @@ table(merged_seurat$final_labels)
 
 This project is licensed under the MIT License - see the LICENSE.md file for details.
 ```
+=======
+# scODIN
+>>>>>>> origin/main
