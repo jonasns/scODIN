@@ -111,11 +111,13 @@ scData = odin_scoring(gene_priority_table = gene_priority_table,
 
 ### Combining cell number and octim_score per cluster for a cluster-labeling
 scODIN function #2 - odin_cluster_scoring
+
 Combine cell number and scODIN score for labeling cells on the cluster level
 
 This function calculates a combined score based on cell number and scODIN score per cluster, and assigns the top scoring label to each cluster in the given Seurat object.
  
 @param scData A Seurat object containing the clustering data and scODIN scores.
+
 @param clustering_column The name of the column that contains the clustering information (default is "seurat_clusters").
  
 @return The Seurat object with an updated `odin_classification` column, containing the highest scoring label for each cluster.
@@ -220,16 +222,17 @@ scODIN function #6 - odin_knn()
 k-Nearest Neighbors (kNN) search using core cells as reference and unknown cells as quesry.
 This function performs a k-Nearest Neighbors (kNN) search on a Seurat object to classify undefined cells using a reference dataset of core cell types. It wraps around Seurat's `FindTransferAnchors` and `TransferData` functions with additional parameters.
 
-@param scData_sub A Seurat object subset containing the cells to analyze. For instance subsetted to CD4 T cells.
-@param reference_obj A Seurat object containing the reference data (e.g., downsampled core cell types).
-@param knn_method The kNN method to use, either "annoy" or "rann" (default is "annoy").
-@param npcs Number of principal components to use (default is 50).
-@param dims Dimensions to use for kNN search (default is `1:50`).
-@param normalization_method The normalization method for the Seurat object (default is `"LogNormalize"`).
-@param verbose Logical flag to indicate if progress should be printed (default is TRUE).
-@param n_trees Number of trees to use for the kNN method (default is 50 for annoy).
-@param k_weight The number of neighbors to use when predicting labels (default is 50).
-@param k_filter Whether to filter anchors by distance (default is `NA`).
+@param scData_sub A Seurat object subset containing the cells to analyze. For instance subsetted to CD4 T cells.  
+@param reference_obj A Seurat object containing the reference data (e.g., downsampled core cell types).  
+@param knn_method The kNN method to use, either "annoy" or "rann" (default is "annoy").  
+@param npcs Number of principal components to use (default is 50).  
+@param dims Dimensions to use for kNN search (default is `1:50`).  
+@param normalization_method The normalization method for the Seurat object (default is `"LogNormalize"`).  
+@param verbose Logical flag to indicate if progress should be printed (default is TRUE).  
+@param n_trees Number of trees to use for the kNN method (default is 50 for annoy).  
+@param k_weight The number of neighbors to use when predicting labels (default is 50).  
+@param k_filter Whether to filter anchors by distance (default is `NA`).  
+
 @param mapping_score_k Logical, whether to compute the mapping score (default is TRUE).
  
 @return A Seurat object with transferred labels and prediction scores stored in the "predictions" assay.
