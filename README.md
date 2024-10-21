@@ -1,4 +1,4 @@
-![alt text]([http://url/to/img.png](https://github.com/jonasns/scODIN/blob/main/scODIN_cover_image.jpeg)
+![alt text](https://github.com/jonasns/scODIN/blob/main/scODIN_cover_image.jpeg)
 
 # scODIN: Optimized Detection and Inference of Names in scRNA-seq data
 
