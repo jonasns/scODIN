@@ -84,7 +84,7 @@ DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = T, pt.size = 0.5, ras
 ```
 
 ### scODIN scoring on the top level
-scODIN function #1 - odin_scoring()  
+**scODIN function #1 - odin_scoring()**  
 This function calculates scODIN scores for cell types based on priority genes from a provided gene priority table and a Seurat object with gene expression values.  
 
 @param `gene_priority_table` A tibble containing gene priorities for different cell types. Usually provided in an Excel sheet.  
@@ -110,16 +110,13 @@ scData = odin_scoring(gene_priority_table = gene_priority_table,
 ```
 
 ### Combining cell number and octim_score per cluster for a cluster-labeling
-scODIN function #2 - odin_cluster_scoring
-
-Combine cell number and scODIN score for labeling cells on the cluster level
-
+**scODIN function #2 - odin_cluster_scoring**  
+Combine cell number and scODIN score for labeling cells on the cluster level  
 This function calculates a combined score based on cell number and scODIN score per cluster, and assigns the top scoring label to each cluster in the given Seurat object.
  
-@param scData A Seurat object containing the clustering data and scODIN scores.
+@param `scData` A Seurat object containing the clustering data and scODIN scores.  
+@param `clustering_column` The name of the column that contains the clustering information (default is "seurat_clusters").  
 
-@param clustering_column The name of the column that contains the clustering information (default is "seurat_clusters").
- 
 @return The Seurat object with an updated `odin_classification` column, containing the highest scoring label for each cluster.
 
 ```{r}
@@ -147,13 +144,13 @@ scCD4 = odin_scoring(gene_priority_table = gene_priority_table,
 ```
 
 ### Simplify final double labels
-scODIN function #3 - simplify_double_labels()
-Simplify final double labels in scRNA-seq data
-This function simplifies the final double labels in a Seurat object by replacing accepted double combinations of cell types with a simplified name provided by the user.
+**scODIN function #3 - simplify_double_labels()**  
+Simplify final double labels in scRNA-seq data  
+This function simplifies the final double labels in a Seurat object by replacing accepted double combinations of cell types with a simplified name provided by the user.  
 
-@param scData A Seurat object that contains `final_labels` in its metadata.
-@param accepted_doubles_table A tibble for accepted double labels. Usually coming from an Excel sheet.
-@param cell_level Character string specifying the subset level (e.g., "CD4_T").
+@param `scData` A Seurat object that contains `final_labels` in its metadata.  
+@param `accepted_doubles_table` A tibble for accepted double labels. Usually coming from an Excel sheet.  
+@param `cell_level` Character string specifying the subset level (e.g., "CD4_T").  
  
 @return The Seurat object with updated `final_labels` in the metadata.
 
@@ -167,20 +164,20 @@ scCD4 = simplify_double_labels(scCD4, accepted_doubles_table, "CD4_T")
 table(scCD4$final_labels)
 ```
 
-In the previous steps we have identified the core cells. In the next steps we will conduct kNN search for nearest neighbours. First we downsample and run PCA on the downsampled dataset.
+In the previous steps we have identified the core cells. In the next steps we will conduct kNN search for nearest neighbours. First we downsample and run PCA on the downsampled dataset.  
 
 ### Downsample core cells
-scODIN function #4 - downsample_core()
-Downsample the identified core cells to a specified cell count per final label
-This function downsamples a Seurat object to have a similar number of core cells per final label. It randomly selects cells up to a user-defined target count or the median cell count if specified.
+**scODIN function #4 - downsample_core()**  
+Downsample the identified core cells to a specified cell count per final label.  
+This function downsamples a Seurat object to have a similar number of core cells per final label. It randomly selects cells up to a user-defined target count or the median cell count if specified.  
 
-@param scData A Seurat object containing the single-cell data and the core cell types as `final_labels`.
-@param target_count An integer specifying the target count for downsampling. It is overruled by use_median = TRUE.
-@param use_median A logical indicating whether to use the median cell count (TRUE) or the target count (FALSE).
-@param labels_to_exclude A character vector specifying the labels to exclude (default is `c("unknown")`).
-@param seed An integer value for setting the seed to ensure reproducibility (default is 1984).
+@param `scData` A Seurat object containing the single-cell data and the core cell types as `final_labels`.  
+@param `target_count` An integer specifying the target count for downsampling. It is overruled by use_median = TRUE.  
+@param `use_median` A logical indicating whether to use the median cell count (TRUE) or the target count (FALSE).  
+@param `labels_to_exclude` A character vector specifying the labels to exclude (default is `c("unknown")`).  
+@param `seed` An integer value for setting the seed to ensure reproducibility (default is 1984).  
 
-@return A downsampled Seurat object with the specified cell level and a similar number of cells per final label.
+@return A downsampled Seurat object with the specified cell level and a similar number of cells per final label.  
 
 ```{r}
 # number of cells in each subtype before downsampling
@@ -193,19 +190,19 @@ table(pbmc_core_ds$final_labels)
 ```
 
 ### PCA on downsampled cells
-scODIN function #5 - core_pca()
-Wrapper for Seurat functions: FindVariableFeatures, ScaleData, and RunPCA
-This function sequentially applies FindVariableFeatures, ScaleData, and RunPCA on a given Seurat object, with user-defined input for parameters such as the number of variable features, number of principal components, etc.
+**scODIN function #5 - core_pca()**  
+Wrapper for Seurat functions: FindVariableFeatures, ScaleData, and RunPCA.  
+This function sequentially applies FindVariableFeatures, ScaleData, and RunPCA on a given Seurat object, with user-defined input for parameters such as the number of variable features, number of principal components, etc.  
 
-@param seurat_obj A Seurat object on which the functions will be applied.
-@param assay Assay to use (default is `"RNA"`).
-@param selection_method Method for selecting variable features in FindVariableFeatures (default is `"vst"`).
-@param nfeatures Number of variable features to select in FindVariableFeatures (default is 2000).
-@param verbose Logical indicating whether to print progress (default is TRUE).
-@param npcs Number of principal components to compute in RunPCA (default is 50).
-@param reduction_name Name of the dimensional reduction set to store (default is `"core_PCA"`).
+@param `seurat_obj` A Seurat object on which the functions will be applied.  
+@param `assay` Assay to use (default is `"RNA"`).  
+@param `selection_method` Method for selecting variable features in FindVariableFeatures (default is `"vst"`).  
+@param `nfeatures` Number of variable features to select in FindVariableFeatures (default is 2000).  
+@param `verbose` Logical indicating whether to print progress (default is TRUE).  
+@param `npcs` Number of principal components to compute in RunPCA (default is 50).  
+@param `reduction_name` Name of the dimensional reduction set to store (default is `"core_PCA"`).  
 
-@return A Seurat object with variable features found, data scaled, and PCA run.
+@return A Seurat object with variable features found, data scaled, and PCA run.  
 
 ```{r}
 pbmc_core_ds <- core_pca(pbmc_core_ds, 
@@ -218,21 +215,22 @@ pbmc_core_ds <- core_pca(pbmc_core_ds,
 ```
 
 ### kNN search for identities of unknown cell types
-scODIN function #6 - odin_knn()
-k-Nearest Neighbors (kNN) search using core cells as reference and unknown cells as quesry.
-This function performs a k-Nearest Neighbors (kNN) search on a Seurat object to classify undefined cells using a reference dataset of core cell types. It wraps around Seurat's `FindTransferAnchors` and `TransferData` functions with additional parameters.
+**scODIN function #6 - odin_knn()**  
+k-Nearest Neighbors (kNN) search using core cells as reference and unknown cells as query.  
+This function performs a k-Nearest Neighbors (kNN) search on a Seurat object to classify undefined cells using a reference dataset of core cell types. It wraps around Seurat's `FindTransferAnchors` and `TransferData` functions with additional parameters.  
 
-@param scData_sub A Seurat object subset containing the cells to analyze. For instance subsetted to CD4 T cells.  
-@param reference_obj A Seurat object containing the reference data (e.g., downsampled core cell types).  
-@param knn_method The kNN method to use, either "annoy" or "rann" (default is "annoy").  
-@param npcs Number of principal components to use (default is 50).  
-@param dims Dimensions to use for kNN search (default is `1:50`).  
-@param normalization_method The normalization method for the Seurat object (default is `"LogNormalize"`).  
-@param verbose Logical flag to indicate if progress should be printed (default is TRUE).  
-@param n_trees Number of trees to use for the kNN method (default is 50 for annoy).  
-@param k_weight The number of neighbors to use when predicting labels (default is 50).  
-@param k_filter Whether to filter anchors by distance (default is `NA`).  
-@param mapping_score_k Logical, whether to compute the mapping score (default is TRUE).  
+@param `scData_sub` A Seurat object subset containing the cells to analyze. For instance subsetted to CD4 T cells.  
+@param `reference_obj` A Seurat object containing the reference data (e.g., downsampled core cell types).  
+@param `knn_method` The kNN method to use, either "annoy" or "rann" (default is "annoy").  
+@param `npcs` Number of principal components to use (default is 50).  
+@param `dims` Dimensions to use for kNN search (default is `1:50`).  
+@param `normalization_method` The normalization method for the Seurat object (default is `"LogNormalize"`).  
+@param `verbose` Logical flag to indicate if progress should be printed (default is TRUE).  
+@param `n_trees` Number of trees to use for the kNN method (default is 50 for annoy).  
+@param `k_weight` The number of neighbors to use when predicting labels (default is 50).  
+@param `k_filter` Whether to filter anchors by distance (default is `NA`).  
+@param `mapping_score_k` Logical, whether to compute the mapping score (default is TRUE).  
+
 @return A Seurat object with transferred labels and prediction scores stored in the "predictions" assay.
 
 ```{r}
@@ -245,16 +243,16 @@ pbmc_undefined_transf <- odin_knn(scData_sub = scCD4,
 ```
 
 ### Filter out low scoring predicted cells
-scODIN function #7 - apply_score_filter()
-Apply a score filter to kNN predictions
-This function applies a score filter to the predictions in a specified assay of a Seurat object. It assigns "Unassigned" to any cell where the maximum prediction score is below the specified threshold and returns the name of the cell type with the highest score for those above the threshold.
+**scODIN function #7 - apply_score_filter()**  
+Apply a score filter to kNN predictions.  
+This function applies a score filter to the predictions in a specified assay of a Seurat object. It assigns "Unassigned" to any cell where the maximum prediction score is below the specified threshold and returns the name of the cell type with the highest score for those above the threshold.  
 
-@param scData A Seurat object containing the predictions.
-@param assay A character string specifying the assay from which to retrieve the predictions. Defaults to "predictions".
-@param slot A character string specifying the slot from which to retrieve the data within the assay. Defaults to "data".
-@param score.filter A numeric value indicating the threshold below which cells are labeled as "Unassigned". Defaults to 0.5. This should be adjusted empirically, as few cell types in the core requires a higher cutoff than a core with many cell types.
+@param `scData` A Seurat object containing the predictions.  
+@param `assay` A character string specifying the assay from which to retrieve the predictions. Defaults to "predictions".  
+@param `slot` A character string specifying the slot from which to retrieve the data within the assay. Defaults to "data".  
+@param `score.filter` A numeric value indicating the threshold below which cells are labeled as "Unassigned". Defaults to 0.5. This should be adjusted empirically, as few cell types in the core requires a higher cutoff than a core with many cell types.  
 
-@return A character vector of predicted cell types, with "Unassigned" for cells that do not meet the score threshold.
+@return A character vector of predicted cell types, with "Unassigned" for cells that do not meet the score threshold.  
 
 ```{r}
 # number of cells before score filter. Every cell is given an ID based on which cell has the highest score
@@ -272,12 +270,12 @@ table(pbmc_undefined_transf$predicted_id_knn)
 ```
 
 ### Combining core and predicted cells to one Seurat object
-scODIN function #8 - odin_merge()
-Merge core cell type Seurat object and kNN predicted Seurat object
-This function merges a core Seurat object with a kNN Seurat object, adds a source column to indicate the origin of each cell, and corrects the final labels by replacing dashes with underscores based on the original labels.
+**scODIN function #8 - odin_merge()**  
+Merge core cell type Seurat object and kNN predicted Seurat object.  
+This function merges a core Seurat object with a kNN Seurat object, adds a source column to indicate the origin of each cell, and corrects the final labels by replacing dashes with underscores based on the original labels.  
 
-@param core_object A Seurat object containing core cell types with original labels.
-@param knn_object A Seurat object containing kNN results with predicted labels.
+@param `core_object` A Seurat object containing core cell types with original labels.  
+@param `knn_object` A Seurat object containing kNN results with predicted labels.  
  
 @return A merged Seurat object with updated final labels and a source column indicating whether the cell originated from the core or the kNN object.
 
@@ -298,5 +296,4 @@ table(merged_seurat$final_labels)
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE.md file for details.
-```
+This project is licensed under the MIT License - see the LICENSE.md file for details.  
