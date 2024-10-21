@@ -1,12 +1,11 @@
 Package: scODIN
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
+Title: Optimized Detection and Inference of Names in scRNA-seq data
+Version: 1.0.0
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+    person("Jonas N.", "Søndergaard", , "jonas@cider.osaka-u.ac.jp", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-4438-6756"))
+Description: scODIN is an R package designed for analyzing single-cell RNA sequencing (scRNA-seq) data using the scODIN scoring method. It provides tools for scoring cell types based on priority genes, clustering, simplifying labels, downsampling, and performing k-Nearest Neighbors (kNN) classification.
+License: `use_mit_license()`
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
