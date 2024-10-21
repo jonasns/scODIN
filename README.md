@@ -14,13 +14,13 @@ devtools::install_github("jonasns/scODIN")
 
 please install the following dependencies separately according to their instructions:
 
-Seurat
+`Seurat`
 
-dplyr
+`dplyr`
 
-readxl
+`readxl`
 
-stringr
+`stringr`
 
 
 ## Tutorial and presentation of functions
@@ -84,17 +84,17 @@ DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = T, pt.size = 0.5, ras
 ```
 
 ### scODIN scoring on the top level
-scODIN function #1 - odin_scoring()
-This function calculates scODIN scores for cell types based on priority genes from a provided gene priority table and a Seurat object with gene expression values.
+scODIN function #1 - odin_scoring()  
+This function calculates scODIN scores for cell types based on priority genes from a provided gene priority table and a Seurat object with gene expression values.  
 
-@param gene_priority_table A tibble containing gene priorities for different cell types. Usually provided in an Excel sheet.
-@param scData A Seurat object containing normalized and scaled scRNA-seq gene expression data.
-@param core_cell_cutoff A numeric value indicating the cutoff for what is considered a core cell type. Default is 5, but should be adjusted lower if using less deeply sequenced dataset.
-@param similarity_threshold A numeric value defining the similarity threshold for determining double labels. Default is 1.
-@param accepted_doubles_table A tibble for accepted double labels. Usually provided in an Excel sheet.
-@param cell_level A string telling which level the analysis should be done on (e.g., "Top", "CD4_T").
+@param `gene_priority_table` A tibble containing gene priorities for different cell types. Usually provided in an Excel sheet.  
+@param `scData` A Seurat object containing normalized and scaled scRNA-seq gene expression data.  
+@param `core_cell_cutoff` A numeric value indicating the cutoff for what is considered a core cell type. Default is 5, but should be adjusted lower if using less deeply sequenced dataset.  
+@param `similarity_threshold` A numeric value defining the similarity threshold for determining double labels. Default is 1.  
+@param `accepted_doubles_table` A tibble for accepted double labels. Usually provided in an Excel sheet.  
+@param `cell_level` A string telling which level the analysis should be done on (e.g., "Top", "CD4_T").  
 
-@return A Seurat object with scODIN scores and metadata added.
+@return A Seurat object with scODIN scores and metadata added.  
 
 ```r
 # Note the gene_priority_table has been provided to reviewers and will be made available upon paper acceptance.
@@ -232,9 +232,7 @@ This function performs a k-Nearest Neighbors (kNN) search on a Seurat object to 
 @param n_trees Number of trees to use for the kNN method (default is 50 for annoy).  
 @param k_weight The number of neighbors to use when predicting labels (default is 50).  
 @param k_filter Whether to filter anchors by distance (default is `NA`).  
-
-@param mapping_score_k Logical, whether to compute the mapping score (default is TRUE).
- 
+@param mapping_score_k Logical, whether to compute the mapping score (default is TRUE).  
 @return A Seurat object with transferred labels and prediction scores stored in the "predictions" assay.
 
 ```{r}
