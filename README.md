@@ -2,9 +2,7 @@
 
 `scODIN` is an R package designed for analyzing single-cell RNA sequencing (scRNA-seq) data using the scODIN scoring method. It provides tools for scoring cell types based on priority genes, clustering, simplifying labels, downsampling, and performing k-Nearest Neighbors (kNN) classification
 
-<p align="center">
 <img src="https://github.com/jonasns/scODIN/blob/main/scODIN_cover_image.jpeg" width=100% height=100%>
-</p>
 
 ## Installation
 
