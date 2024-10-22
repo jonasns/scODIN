@@ -1,0 +1,1423 @@
+---
+title: "241018 - other cell typing algorithms notebook"
+output: html_notebook
+---
+
+```{r}
+library(SeuratDisk)
+library(Seurat)
+library(dplyr)
+library(readxl)
+library(cowplot)
+library(scSorter)
+library(SCINA)
+library(scSorter)
+library(scCATCH)
+```
+
+```{r}
+sessionInfo()
+```
+
+# Dataset load
+```{r}
+pbmc_hani <- LoadH5Seurat("/Volumes/G-DRIVE ArmorATD/public_h5ad/haniffa21.processed.h5seurat")
+```
+
+```{r}
+scData = pbmc_hani
+
+# normalize Seurat object
+scData <- NormalizeData(scData)
+
+#scale the Seurat data
+all.genes <- rownames(scData)
+scData <- ScaleData(scData, features = all.genes)
+```
+
+```{r}
+gc()
+```
+
+## loading my annotation file
+```{r}
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+```
+
+
+# scSorter
+https://cran.r-project.org/web/packages/scSorter/vignettes/scSorter.html
+
+```{r}
+library(scSorter)
+```
+
+### tutorial example
+```{r}
+load(url('https://github.com/hyguo2/scSorter/blob/master/inst/extdata/TMpancreas.RData?raw=true'))
+```
+
+```{r}
+expr[1:5, 1:5]
+```
+
+```{r}
+head(anno)
+```
+
+```{r}
+topgenes = xfindvariable_genes(expr, ngenes = 2000)
+expr = xnormalize_scData(expr)
+topgene_filter = rowSums(as.matrix(expr)[topgenes, ]!=0) > ncol(expr)*.1
+topgenes = topgenes[topgene_filter]
+picked_genes = unique(c(anno$Marker, topgenes))
+expr = expr[rownames(expr) %in% picked_genes, ]
+```
+
+```{r}
+library(Seurat)
+expr_obj = CreateSeuratObject(expr)
+expr_obj <- NormalizeData(expr_obj, normalization.method = "LogNormalize", scale.factor = 10000, verbose = F)
+```
+
+```{r}
+expr_obj <- FindVariableFeatures(expr_obj, selection.method = "vst", nfeatures = 2000, verbose = F)
+topgenes <- head(VariableFeatures(expr_obj), 2000)
+
+expr = GetAssayData(expr_obj)
+topgene_filter = rowSums(as.matrix(expr)[topgenes, ]!=0) > ncol(expr)*.1
+topgenes = topgenes[topgene_filter]
+```
+
+```{r}
+picked_genes = unique(c(anno$Marker, topgenes))
+expr = expr[rownames(expr) %in% picked_genes, ]
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+rts <- scSorter(expr, anno)
+end_time = Sys.time()
+end_time - start_time
+```
+
+```{r}
+print(table(rts$Pred_Type))
+```
+
+```{r}
+mis_rate = 1 - mean(rts$Pred_Type == true_type)
+round(mis_rate, 4)
+```
+
+```{r}
+table(true_type, rts$Pred_Type)
+```
+
+### Notes
+So there is no annotation file available. You have to make it yourself. Could try with e.g. my own or from a different package
+
+## scSorter Haniffa, their annotation
+
+```{r}
+start_time = Sys.time()
+start_time
+rts <- scSorter(scData@assays$RNA$scale.data, anno)
+end_time = Sys.time()
+end_time - start_time
+```
+
+## scSorter Haniffa, my annotation
+### reformat my annotation
+```{r}
+head(anno)
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+#scSorter does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:4)]
+colnames(gpt) = colnames(anno)
+
+gpt = as.data.frame(gpt)
+
+# Convert the Weight column to numeric
+gpt <- gpt %>%
+  mutate(Weight = as.numeric(Weight))
+```
+
+```{r}
+anno2 = anno
+anno2$Weight = 0.9
+anno2$Weight[5:10] = 10
+gpt2 = gpt
+gpt2$Weight = 0.5
+gpt2$Weight[5:20] = 10
+
+gpt2$Weight = 1
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+rts <- scSorter(expr, gpt2)
+end_time = Sys.time()
+end_time - start_time
+```
+
+```{r}
+start_time = Sys.time()
+start_time
+rts <- scSorter(scCD4@assays$RNA$scale.data, gpt)
+end_time = Sys.time()
+end_time - start_time
+```
+240607 - removed all non-used big R objects, and tried running the full dataset starting with 188Gb RAM used. It still stopped after 5-10 min with vector memory exhausted
+240607 - removed all non-used big R objects, and tried running the CD4 T cell dataset starting with 218Gb RAM used. Started Friday, and Monday morning it said it ran out of memory. Not sure when. One last try would be to load haniffa dataset and not scale and normalize before running. That should free up more memory
+
+scSorter on full dataset quickly runs out of memory. Using more than 100gb memory ()
+
+Start: [1] "2024-06-05 13:51:10 JST"
+Stopped at 10.54 the next day. It was still running
+
+# scSorter, PBMC3k, scODIN database
+## load in data
+https://cf.10xgenomics.com/samples/cell/pbmc3k/pbmc3k_filtered_gene_bc_matrices.tar.gz
+```{r}
+# Load the PBMC dataset
+pbmc_3k <- Read10X(data.dir = "~/Desktop/filtered_gene_bc_matrices/hg19")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc_3k <- CreateSeuratObject(counts = pbmc_3k, project = "pbmc3k", min.cells = 3, min.features = 200)
+
+#QC
+pbmc_3k[["percent.mt"]] <- PercentageFeatureSet(pbmc_3k, pattern = "^MT-")
+pbmc_3k <- subset(pbmc_3k, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+# normalize Seurat object
+pbmc_3k <- NormalizeData(pbmc_3k, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#find variable features
+pbmc_3k <- FindVariableFeatures(pbmc_3k, selection.method = "vst", nfeatures = 2000)
+
+#scale the Seurat data
+all.genes <- rownames(pbmc_3k)
+pbmc_3k <- ScaleData(pbmc_3k, features = all.genes)
+
+pbmc_3k
+```
+
+### reformat my annotation
+```{r}
+head(anno)
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+#scSorter does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:4)]
+colnames(gpt) = colnames(anno)
+
+gpt = as.data.frame(gpt)
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gpt$Marker[!gpt$Marker %in% rownames(pbmc_3k)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly. A common mistake is to put protein names instead of gene names ◔̯◔")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+# remove missing genes
+gpt = gpt[!gpt$Marker %in% missing_genes,]
+
+# Convert the Weight column to numeric
+gpt <- gpt %>%
+  mutate(Weight = as.numeric(Weight))
+```
+
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+rts <- scSorter(pbmc_3k@assays$RNA$scale.data, gpt)
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+pbmc_3k = AddMetaData(pbmc_3k, rts$Pred_Type, col.name = "scSorter_results")
+```
+
+## UMAP of the data
+```{r}
+pbmc_3k <- RunPCA(pbmc_3k, features = VariableFeatures(object = pbmc_3k))
+pbmc_3k <- FindNeighbors(pbmc_3k, dims = 1:10)
+pbmc_3k <- FindClusters(pbmc_3k, resolution = 0.5)
+pbmc_3k <- RunUMAP(pbmc_3k, dims = 1:10)
+DimPlot(pbmc_3k, reduction = "umap")
+```
+
+```{r}
+p = DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'scSorter_results')
+p
+```
+
+```{r}
+pdf("~/Desktop/240708_pbmc3k_scSorter_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+```{r}
+table(pbmc_3k$scSorter_results)
+```
+
+# Add the "correct" cell type IDs to the Seurat object
+"correct" as in how it was in the original paper (https://www.nature.com/articles/ncomms14049)
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+pbmc_3k.markers <- FindAllMarkers(pbmc_3k, only.pos = TRUE)
+pbmc_3k.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+```
+
+
+```{r}
+pbmc_3k.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(pbmc_3k, features = top10$gene) + NoLegend()
+```
+
+```{r}
+#Assigning cell type identity to clusters
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc_3k)
+pbmc_3k <- RenameIdents(pbmc_3k, new.cluster.ids)
+DimPlot(pbmc_3k, reduction = "umap", label = TRUE, pt.size = 0.5)
+```
+
+```{r}
+p
+```
+
+## add the results to the Seurat object
+```{r}
+pbmc_3k = AddMetaData(pbmc_3k, Idents(pbmc_3k), col.name = "original_idents")
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "B" = "B cell",
+  "CD8 T" = "CD8_T",
+  "DC" = "mDC",
+  "FCGR3A+ Mono" = "Monocyte",
+  "CD14+ Mono" = "Monocyte",
+  "Naive CD4 T" = "CD4_T",
+  "Memory CD4 T" = "CD4_T",
+  "B" = "Plasmablast"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(pbmc_3k$original_idents, equivalent_labels)
+scSorter_results_mapped <- map_labels(pbmc_3k$scSorter_results, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+# scSorter, Seurat, scODIN database
+```{r}
+head(anno)
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+#scSorter does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:4)]
+colnames(gpt) = colnames(anno)
+
+gpt = as.data.frame(gpt)
+
+# Convert the Weight column to numeric
+gpt <- gpt %>%
+  mutate(Weight = as.numeric(Weight))
+gpt
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+rts <- scSorter(seurat_pbmc@assays$SCT$scale.data, gpt)
+end_time = Sys.time()
+end_time - start_time
+```
+Did not finish in 17 hours
+
+
+# SCINA
+```{r}
+#install.packages('SCINA')
+library('SCINA')
+```
+
+```{r}
+#.Rdata examples
+load(system.file('extdata','example_expmat.RData', package = "SCINA"))
+load(system.file('extdata','example_signatures.RData', package = "SCINA"))
+exp = exp_test$exp_data
+
+# Or .csv examples
+#exp=read.csv('your/path/to/example_expmat.csv',row.names=1,stringsAsFactors = F)
+#signatures=preprocess.signatures('your/path/to/example_signatures.csv')
+```
+
+```{r, eval = F}
+#Install preprocessCore if required
+#BiocManager::install("preprocessCore")
+library('preprocessCore')
+#Read data
+exp_raw=read.csv('your/path/to/raw/expression_matrix.csv',row.names=1,stringsAsFactors = F)
+#Log scale and quantile normalization
+exp_raw=log(exp_raw+1)
+exp[]=normalize.quantiles(exp_raw)
+```
+
+```{r}
+results = SCINA(exp, signatures, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+```
+
+```{r}
+plotheat.SCINA(exp, results, signatures)
+```
+
+# SCINA, PBMC3k, their signatures (which is just a small example signature)
+```{r}
+start_time = Sys.time()
+start_time
+results = SCINA(pbmc_3k@assays$RNA$scale.data, signatures, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+pbmc_3k = AddMetaData(pbmc_3k, results$cell_labels, col.name = "SCINA_results")
+```
+
+```{r}
+DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+```
+
+## SCINA, Haniffa, their signatures (which is just a small example signature)
+```{r}
+start_time = Sys.time()
+start_time
+results = SCINA(scData@assays$RNA@scale.data, signatures, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+scData = AddMetaData(scData, results$cell_labels, col.name = "SCINA_results")
+```
+
+```{r}
+DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+```
+
+## use my signatures (only positive) instead
+```{r}
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+#SCINA does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:3)]
+gpt = as.data.frame(gpt)
+
+gpt <- split(gpt$gene_id, gpt$cell_type)
+
+# Replace spaces with underscores in the list names
+names(gpt) <- gsub(" ", "_", names(gpt))
+```
+
+## SCINA, PBMC3k, my signature (only positive)
+## use my signatures (only positive) instead. remove genes not present in the dataset
+```{r}
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+
+#SCINA does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:3)]
+gpt = as.data.frame(gpt)
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gpt$gene_id[!gpt$gene_id %in% rownames(pbmc_3k)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly. A common mistake is to put protein names instead of gene names ◔̯◔")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+# remove missing genes
+gpt = gpt[!gpt$gene_id %in% missing_genes,]
+
+gpt <- split(gpt$gene_id, gpt$cell_type)
+
+# Replace spaces with underscores in the list names
+names(gpt) <- gsub(" ", "_", names(gpt))
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+results = SCINA(pbmc_3k@assays$RNA$scale.data, gpt2, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+pbmc_3k = AddMetaData(pbmc_3k, results$cell_labels, col.name = "SCINA_results")
+```
+
+```{r}
+DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'original_idents')
+
+```
+```{r}
+p = DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+p
+```
+
+```{r}
+pdf("~/Desktop/240704_pbmc3k_SCINA_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "DC" = "Myeloid Dendritic cells",
+  "FCGR3A+ Mono" = "Monocyte",
+  "CD14+ Mono" = "Monocyte",
+  "Platelet" = "Platelets",
+  "NK" = "NK",
+  "Memory CD4 T" = "CD4_T",
+  "Naive CD4 T" = "CD4_T",
+  "CD8 T" = "CD8_T",
+  "B" = "Plasmablast"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(pbmc_3k$original_idents, equivalent_labels)
+scSorter_results_mapped <- map_labels(pbmc_3k$SCINA_results, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+
+## SCINA, Haniffa, my signature (only positive)
+## use my signatures (only positive) instead. remove genes not present in the dataset
+```{r}
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+
+#SCINA does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:3)]
+gpt = as.data.frame(gpt)
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gpt$gene_id[!gpt$gene_id %in% rownames(scData)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly. A common mistake is to put protein names instead of gene names ◔̯◔")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+# remove missing genes
+gpt = gpt[!gpt$gene_id %in% missing_genes,]
+
+gpt <- split(gpt$gene_id, gpt$cell_type)
+
+# Replace spaces with underscores in the list names
+names(gpt) <- gsub(" ", "_", names(gpt))
+```
+
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+results = SCINA(scData@assays$RNA@scale.data, gpt, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+scData = AddMetaData(scData, results$cell_labels, col.name = "SCINA_results")
+```
+
+```{r}
+DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'initial_clustering')
+```
+
+```{r}
+p = DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+```
+
+```{r}
+pdf("~/Desktop/240704_Haniffa_SCINA_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "CD8" = "CD8_T",
+  "CD4" = "CD4_T",
+  "DCs" = "mDC",
+  "Platelets" = "Platelet",
+  "Mono_prolif" = "Monocyte",
+  "CD14" = "Monocyte",
+  "CD16" = "Monocyte",
+  "Treg" = "CD4_T",
+  "NK_56hi" = "NK",
+  "NK_16hi" = "NK",
+  "RBC" = "Erythrocyte"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(scData$initial_clustering, equivalent_labels)
+scSorter_results_mapped <- map_labels(scData$SCINA_results, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+
+## SCINA, Seurat, my signature (only positive)
+```{r}
+# load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+head(gene_priority_table)
+
+
+#SCINA does not take negative values
+gpt = subset(gene_priority_table, gene_direction == "pos")
+
+gpt = gpt[,c(2:3)]
+gpt = as.data.frame(gpt)
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gpt$gene_id[!gpt$gene_id %in% rownames(seurat_pbmc)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly. A common mistake is to put protein names instead of gene names ◔̯◔")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+# remove missing genes
+gpt = gpt[!gpt$gene_id %in% missing_genes,]
+
+gpt <- split(gpt$gene_id, gpt$cell_type)
+
+# Replace spaces with underscores in the list names
+names(gpt) <- gsub(" ", "_", names(gpt))
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+results = SCINA(seurat_pbmc@assays$SCT$scale.data, gpt, max_iter = 100, convergence_n = 10, 
+    convergence_rate = 0.999, sensitivity_cutoff = 0.9, rm_overlap=TRUE, allow_unknown=TRUE, log_file='SCINA.log')
+end_time = Sys.time()
+end_time - start_time
+```
+
+## add the results to the Seurat object
+```{r}
+seurat_pbmc = AddMetaData(seurat_pbmc, results$cell_labels, col.name = "SCINA_results")
+```
+
+```{r}
+DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'celltype.l2')
+DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'SCINA_results')
+```
+
+```{r}
+original <- levels(as.factor(seurat_pbmc$celltype.l2))
+algorithm <- levels(as.factor(seurat_pbmc$SCINA_results))
+
+# Adjust the length of the shorter vector to match the longer one, filling with NA
+length(original) <- max(length(original), length(algorithm))
+length(algorithm) <- max(length(original), length(algorithm))
+
+lab_tab <- tibble(original = original, algorithm = algorithm)
+
+# do this in terminal:
+print(lab_tab, n = Inf)
+```
+
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+# first is the original 2nd is the algorithm
+equivalent_labels <- list(
+  "B intermediate" = "B cell",
+  "B memory" = "B cell",
+  "B naive" = "B cell",
+  "CD14 Mono" = "Monocyte",
+  "CD16 Mono" = "Monocyte",
+  "CD4 CTL" = "CD4_T",
+  "CD4 Naive" = "CD4_T",
+  "CD4 Proliferating" = "Proliferating",
+  "CD4 TCM" = "CD4_T",
+  "CD4 TEM" = "CD4_T",
+  "Treg" = "CD4_T",
+  "CD8 Naive" = "CD8_T",
+  "CD8 Proliferating" = "Proliferating",
+  "CD8 TCM" = "CD8_T",
+  "CD8 TEM" = "CD8_T",
+  "cDC1" = "mDC",
+  "cDC2" = "mDC",
+  "Eryth" = "Erythrocyte",
+  "HSPC" = "HSC",
+  "NK Proliferating" = "NK",
+  "NK Proliferating" = "NK_CD56bright"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(seurat_pbmc$celltype.l2, equivalent_labels)
+scSorter_results_mapped <- map_labels(seurat_pbmc$SCINA_results, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+# scCATCH
+```{r}
+# install from cran
+#install.packages("scCATCH")
+library(scCATCH)
+```
+```{r}
+load(paste0(system.file(package = "scCATCH"), "/extdata/mouse_kidney_203.rda"))
+demo_geneinfo()
+# revise gene symbols
+mouse_kidney_203 <- rev_gene(data = mouse_kidney_203, data_type = "data", species = "Mouse", geneinfo = geneinfo)
+```
+```{r}
+obj <- createscCATCH(data = mouse_kidney_203, cluster = mouse_kidney_203_cluster)
+
+```
+
+```{r}
+demo_marker()
+```
+
+```{r}
+# find highly expressed genes
+obj <- findmarkergene(object = obj, species = "Mouse", marker = cellmatch, tissue = "Kidney")
+```
+
+
+```{r}
+obj <- findcelltype(object = obj)
+obj@celltype
+```
+
+```{r}
+# The most strict condition to identify marker genes
+obj <- findmarkergene(object = obj, species = "Mouse", marker = cellmatch,tissue = "Kidney", use_method = "1")
+#> There are 1764 potential marker genes in CellMatch database for Mouse on Kidney.
+
+# The most loose condition to identify marker genes
+obj <- findmarkergene(object = obj, species = "Mouse", marker = cellmatch, tissue = "Kidney", use_method = "2")
+#> There are 1764 potential marker genes in CellMatch database for Mouse on Kidney.
+
+# Other conditions to identify marker genes
+obj <- findmarkergene(object = obj,species = "Mouse", marker = cellmatch, tissue = "Kidney", use_method = "1", comp_cluster = 1)
+#> There are 1764 potential marker genes in CellMatch database for Mouse on Kidney.
+```
+
+
+```{r}
+# sc_data is the scRNA-seq data matrix 
+# sc_cluster is a character containing the cluster information
+obj <- createscCATCH(data = sc_data, cluster = sc_cluster)
+
+# find marker gene for each cluster
+obj <- findmarkergene(obj, species, marker, tissue, cancer)
+
+# find cell type for each cluster
+obj <- findcelltype(obj)
+
+```
+
+## scCATCH, 3k PBMC, their database
+Create scCATCH object from Seurat object with the following code:
+```{r}
+obj <- createscCATCH(data = pbmc_3k[['RNA']]$scale.data, cluster = as.character(Idents(pbmc_3k)))
+```
+
+```{r}
+# The most strict condition to identify marker genes
+start_time = Sys.time()
+start_time
+obj <- findmarkergene(object = obj, species = "Human", marker = cellmatch,tissue = "Blood", use_method = "1")
+obj <- findcelltype(object = obj)
+end_time = Sys.time()
+end_time - start_time
+```
+
+
+```{r}
+celltype_info <- as.data.frame(obj@celltype)
+
+# Create a vector to store cell types corresponding to each cell in the Seurat object
+cell_type_vector <- rep(NA, ncol(pbmc_3k))
+
+# Loop over each cluster and assign the corresponding cell type to the cells in that cluster
+for (i in 1:nrow(celltype_info)) {
+  cluster_number <- celltype_info$cluster[i]
+  cell_type <- celltype_info$cell_type[i]
+  
+  # Find the cells in the current cluster
+  cells_in_cluster <- WhichCells(pbmc_3k, idents = cluster_number)
+  
+  # Assign the cell type to these cells
+  cell_type_vector[cells_in_cluster] <- cell_type
+}
+
+# Add the cell type vector to the Seurat object's metadata
+pbmc_3k <- AddMetaData(pbmc_3k, metadata = cell_type_vector, col.name = "scCATCH_results")
+```
+
+Strict results:
+```{r}
+p = DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'scCATCH_results')
+p
+```
+
+```{r}
+pdf("~/Desktop/240704_pbmc3k_scCATCH_umap.pdf",width=7,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "DC" = "Dendritic Cell",
+  "CD14+ Mono" = "CD14+ Monocyte"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(pbmc_3k$original_idents, equivalent_labels)
+scSorter_results_mapped <- map_labels(pbmc_3k$scCATCH_results, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Replace NA values in scSorter_results_mapped_char with "unknown"
+scSorter_results_mapped_char <- ifelse(is.na(scSorter_results_mapped_char), "unknown", scSorter_results_mapped_char)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+
+## scCATCH, Haniffa, their database
+```{r}
+start_time = Sys.time()
+start_time
+obj <- createscCATCH(data = scData[['RNA']]$scale.data, cluster = as.character(scData$initial_clustering))
+end_time = Sys.time()
+end_time - start_time
+```
+full Haniffa dataset:
+Error in .m2sparse(from, "dgC") : 
+  attempt to construct sparseMatrix with more than 2^31-1 nonzero entries
+
+## scCATCH, Seurat PBMC, their database
+Create scCATCH object from Seurat object with the following code:
+
+```{r}
+start_time = Sys.time()
+start_time
+obj <- createscCATCH(data = seurat_pbmc[['SCT']]$scale.data, cluster = as.character(seurat_pbmc$celltype.l2))
+end_time = Sys.time()
+end_time - start_time
+```
+
+# scType
+```{r}
+# load libraries
+lapply(c("dplyr","Seurat","HGNChelper"), library, character.only = T)
+```
+
+```{r}
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+```
+
+```{r}
+# DB file
+db_ <- "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue <- "Immune system" # e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
+
+# prepare gene sets
+gs_list <- gene_sets_prepare(db_, tissue)
+
+```
+
+## scType, Haniffa, their database
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+# check Seurat object version (scRNA-seq matrix extracted differently in Seurat v4/v5)
+seurat_package_v5 <- isFALSE('counts' %in% names(attributes(scData[["RNA"]])));
+print(sprintf("Seurat object %s is used", ifelse(seurat_package_v5, "v5", "v4")))
+
+# extract scaled scRNA-seq matrix
+scRNAseqData_scaled <- if (seurat_package_v5) as.matrix(scData[["RNA"]]$scale.data) else as.matrix(scData[["RNA"]]@scale.data)
+
+# run ScType
+es.max <- sctype_score(scRNAseqData = scRNAseqData_scaled, scaled = TRUE, gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+
+# NOTE: scRNAseqData parameter should correspond to your input scRNA-seq matrix. For raw (unscaled) count matrix set scaled = FALSE
+# When using Seurat, we use "RNA" slot with 'scale.data' by default. Please change "RNA" to "SCT" for sctransform-normalized data,
+# or to "integrated" for joint dataset analysis. To apply sctype with unscaled data, use e.g. scData[["RNA"]]$counts or scData[["RNA"]]@counts, with scaled set to FALSE.
+
+# merge by cluster
+cL_resutls <- do.call("rbind", lapply(unique(scData@meta.data$initial_clustering), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(scData@meta.data[scData@meta.data$initial_clustering==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(scData@meta.data$initial_clustering==cl)), 10)
+}))
+sctype_scores <- cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] <- "Unknown"
+print(sctype_scores[,1:3])
+end_time = Sys.time()
+end_time - start_time
+```
+
+```{r}
+scData@meta.data$sctype_classification = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  scData@meta.data$sctype_classification[scData@meta.data$initial_clustering == j] = as.character(cl_type$type[1])
+}
+
+```
+```{r, fig.width=10, fig.height=6}
+p = DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'sctype_classification')     + ggtitle("scType_results") +
+  theme(plot.title = element_text(hjust = 0.5))        
+p
+```
+
+```{r}
+DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'initial_clustering')   
+```
+
+```{r}
+pdf("~/Desktop/240704_Haniffa_scType_umap.pdf",width=9,height=5 ,paper='special') 
+p
+dev.off()
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "DCs" = "Myeloid Dendritic cells",
+  "Platelets" = "Platelet",
+  "Mono_prolif" = "Classical Monocytes",
+  "CD14" = "Classical Monocytes",
+  "CD16" = "Non-classical monocytes",
+  "pDC" = "Plasmacytoid Dendritic cells",
+  "NK_56hi" = "Natural killer  cells ",
+  "NK_16hi" = "Natural killer  cells ",
+  "HSC" = "Progenitor cells",
+  "Plasmablast" = "Plasma B cells",
+  "gdT" = "γδ-T cells"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(scData$initial_clustering, equivalent_labels)
+scSorter_results_mapped <- map_labels(scData$sctype_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+## scType, PBMC3K
+```{r}
+DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'original_idents')   
+```
+
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+# check Seurat object version (scRNA-seq matrix extracted differently in Seurat v4/v5)
+seurat_package_v5 <- isFALSE('counts' %in% names(attributes(pbmc_3k[["RNA"]])));
+print(sprintf("Seurat object %s is used", ifelse(seurat_package_v5, "v5", "v4")))
+
+# extract scaled scRNA-seq matrix
+scRNAseqData_scaled <- if (seurat_package_v5) as.matrix(pbmc_3k[["RNA"]]$scale.data) else as.matrix(pbmc_3k[["RNA"]]@scale.data)
+
+# run ScType
+es.max <- sctype_score(scRNAseqData = scRNAseqData_scaled, scaled = TRUE, gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+
+# NOTE: scRNAseqData parameter should correspond to your input scRNA-seq matrix. For raw (unscaled) count matrix set scaled = FALSE
+# When using Seurat, we use "RNA" slot with 'scale.data' by default. Please change "RNA" to "SCT" for sctransform-normalized data,
+# or to "integrated" for joint dataset analysis. To apply sctype with unscaled data, use e.g. pbmc_3k[["RNA"]]$counts or pbmc_3k[["RNA"]]@counts, with scaled set to FALSE.
+
+# merge by cluster
+cL_resutls <- do.call("rbind", lapply(unique(pbmc_3k@meta.data$original_idents), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(pbmc_3k@meta.data[pbmc_3k@meta.data$original_idents==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(pbmc_3k@meta.data$original_idents==cl)), 10)
+}))
+sctype_scores <- cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] <- "Unknown"
+print(sctype_scores[,1:3])
+end_time = Sys.time()
+end_time - start_time
+```
+
+
+```{r}
+pbmc_3k@meta.data$sctype_classification = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  pbmc_3k@meta.data$sctype_classification[pbmc_3k@meta.data$original_idents == j] = as.character(cl_type$type[1])
+}
+
+```
+```{r, fig.width=10, fig.height=6}
+p = DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'sctype_classification')   + ggtitle("scType_results") +
+  theme(plot.title = element_text(hjust = 0.5))      
+p
+```
+
+```{r}
+pdf("~/Desktop/240704_pbmc3k_scType_umap.pdf",width=7,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+
+```{r}
+DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'original_idents')   
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "DC" = "Myeloid Dendritic cells",
+  "FCGR3A Mono" = "Non-classical monocytes",
+  "CD14+ Mono" = "Classical Monocytes",
+  "Platelet" = "Platelets",
+  "NK" = "Natural killer  cells",
+  "Memory CD4 T" = "Memory CD4+ T cells"
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(pbmc_3k$original_idents, equivalent_labels)
+scSorter_results_mapped <- map_labels(pbmc_3k$sctype_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+
+## scType, seurat_pbmc, their database
+```{r}
+gc()
+start_time = Sys.time()
+start_time
+# check Seurat object version (scRNA-seq matrix extracted differently in Seurat v4/v5)
+seurat_package_v5 <- isFALSE('counts' %in% names(attributes(seurat_pbmc[["SCT"]])));
+print(sprintf("Seurat object %s is used", ifelse(seurat_package_v5, "v5", "v4")))
+
+# extract scaled scRNA-seq matrix
+scRNAseqData_scaled <- if (seurat_package_v5) as.matrix(seurat_pbmc[["SCT"]]$scale.data) else as.matrix(seurat_pbmc[["SCT"]]@scale.data)
+
+# run ScType
+es.max <- sctype_score(scRNAseqData = scRNAseqData_scaled, scaled = TRUE, gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+
+# NOTE: scRNAseqData parameter should correspond to your input scRNA-seq matrix. For raw (unscaled) count matrix set scaled = FALSE
+# When using Seurat, we use "RNA" slot with 'scale.data' by default. Please change "RNA" to "SCT" for sctransform-normalized data,
+# or to "integrated" for joint dataset analysis. To apply sctype with unscaled data, use e.g. seurat_pbmc[["RNA"]]$counts or seurat_pbmc[["RNA"]]@counts, with scaled set to FALSE.
+
+# merge by cluster
+cL_resutls <- do.call("rbind", lapply(unique(seurat_pbmc@meta.data$celltype.l2), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(seurat_pbmc@meta.data[seurat_pbmc@meta.data$celltype.l2==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(seurat_pbmc@meta.data$celltype.l2==cl)), 10)
+}))
+sctype_scores <- cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] <- "Unknown"
+print(sctype_scores[,1:3])
+end_time = Sys.time()
+end_time - start_time
+```
+
+
+```{r}
+seurat_pbmc@meta.data$sctype_classification = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  seurat_pbmc@meta.data$sctype_classification[seurat_pbmc@meta.data$celltype.l2 == j] = as.character(cl_type$type[1])
+}
+
+```
+```{r, fig.width=10, fig.height=6}
+DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'sctype_classification')        
+```
+
+```{r}
+DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'celltype.l2')   
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "cDC1" = "Myeloid Dendritic cells",
+  "cDC2" = "Myeloid Dendritic cells",
+  "pDC" = "Plasmacytoid Dendritic cells",
+  "Platelet" = "Platelets",
+  "CD14 Mono" = "Classical Monocytes",
+  "CD16 Mono" = "Non-classical monocytes",
+  "NK" = "Natural killer  cells ",
+  "NK Proliferating" = "Natural killer  cells ",
+  "NK_CD56bright" = "Natural killer  cells ",
+  "HSC" = "Progenitor cells",
+  "Plasmablast" = "Plasma B cells",
+  "CD4 TEM" = "Effector CD4+ T cells",
+  "CD8 TEM" = "Effector CD8+ T cells",
+  "CD4 TCM" = "Memory CD4+ T cells",
+  "B naive" = "Naive B cells",
+  "CD4 Naive" = "Naive CD4+ T cells",
+  "CD8 Naive" = "Naive CD8+ T cells",
+  "B naive" = "Naive B cells",
+  "B naive" = "Naive B cells",
+  "B naive" = "Naive B cells",
+  "B naive" = "Naive B cells"
+
+)
+
+# Function to map equivalent labels, handling factors
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) # Convert factors to characters
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) # Convert back to factors if needed
+}
+
+# Map labels in original_idents and scSorter_results
+original_idents_mapped <- map_labels(seurat_pbmc$celltype.l2, equivalent_labels)
+scSorter_results_mapped <- map_labels(seurat_pbmc$sctype_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scSorter_results_mapped_char <- as.character(scSorter_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scSorter_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+
+# Benchmarking figures
+## Correctly assigned cells
+```{r}
+run_times = read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# ordering
+run_times <- run_times %>%
+  mutate(dataset = factor(dataset, levels = c("PBMC3K", "seurat_pbmc", "Haniffa")))
+
+run_times <- run_times %>%
+  mutate(algorithm = factor(algorithm, levels = c("scODIN", "scType","SCINA", "scCATCH", "scSorter")))
+
+# add a combined column of dataset and subset
+run_times <- run_times %>%
+  mutate(dataset_subset = paste(dataset, subset, sep = "_"))
+
+```
+
+```{r}
+library(MoMAColors)
+```
+
+
+```{r}
+# Top level dataset
+run_times_top = subset(run_times, subset == "Top")
+g1 = ggplot(run_times_top, aes(x = dataset, y = correctly_assigned_formatted, fill = algorithm)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "correctly assigned (%)", title = "") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 5))) +
+  theme_minimal()
+g1
+```
+
+
+
+## Run times
+
+```{r}
+# Top level dataset
+run_times_top = subset(run_times, subset == "Top")
+
+g2 = ggplot(run_times_top, aes(x = dataset, y = running_time_formatted_in_sec, fill = algorithm)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "Running time (sec)", title = "") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 5))) +
+  scale_y_continuous(trans = "log10") + 
+  theme_minimal()
+g2
+
+```
+
+```{r}
+plot_grid(g1, g2)
+```
+
+
+```{r}
+pdf(paste0("~/Desktop/240927_ODIN_runTimes.pdf"),width=10,height=3,paper='special') 
+plot_grid(g1,g2)
+dev.off()
+```
+

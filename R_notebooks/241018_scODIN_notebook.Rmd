@@ -1,0 +1,4210 @@
+---
+title: "241018 - scODIN notebook"
+output: html_notebook
+---
+
+### load dependencies
+```{r}
+library(Seurat)
+library(readxl)
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(MoMAColors)
+library(scales)
+library(RColorBrewer)
+library(scODIN)
+```
+
+```{r}
+sessionInfo()
+```
+
+### set seed
+```{r}
+my_seed = 1234
+set.seed(my_seed)
+```
+
+# PBMC 3K dataset
+## load in pbmc3k data
+https://cf.10xgenomics.com/samples/cell/pbmc3k/pbmc3k_filtered_gene_bc_matrices.tar.gz
+```{r}
+# Load the PBMC dataset
+pbmc_3k <- Read10X(data.dir = "~/Desktop/filtered_gene_bc_matrices/hg19")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc_3k <- CreateSeuratObject(counts = pbmc_3k, project = "pbmc3k", min.cells = 3, min.features = 200)
+
+#QC
+pbmc_3k[["percent.mt"]] <- PercentageFeatureSet(pbmc_3k, pattern = "^MT-")
+pbmc_3k <- subset(pbmc_3k, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+
+# normalize Seurat object
+pbmc_3k <- NormalizeData(pbmc_3k, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#find variable features
+pbmc_3k <- FindVariableFeatures(pbmc_3k, selection.method = "vst", nfeatures = 2000)
+
+#scale the Seurat data
+all.genes <- rownames(pbmc_3k)
+pbmc_3k <- ScaleData(pbmc_3k, features = all.genes)
+
+pbmc_3k
+```
+
+## UMAP of the data
+```{r}
+pbmc_3k <- RunPCA(pbmc_3k, features = VariableFeatures(object = pbmc_3k))
+pbmc_3k <- FindNeighbors(pbmc_3k, dims = 1:10)
+pbmc_3k <- FindClusters(pbmc_3k, resolution = 0.5)
+pbmc_3k <- RunUMAP(pbmc_3k, dims = 1:10)
+DimPlot(pbmc_3k, reduction = "umap")
+```
+
+#### Add the original cell type IDs to the Seurat object
+How it was in the original paper: (https://www.nature.com/articles/ncomms14049)
+```{r}
+#Assigning cell type identity to clusters
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono","NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc_3k)
+pbmc_3k <- RenameIdents(pbmc_3k, new.cluster.ids)
+```
+
+```{r}
+p = DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = T, pt.size = 0.5, raster = F) + ggtitle("original annotation") +
+  theme(plot.title = element_text(hjust = 0.5))
+p
+```
+```{r}
+pdf("~/Desktop/240704_pbmc3k_original_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+
+```{r}
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+accepted_doubles_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+pbmc_3k = odin_scoring(gene_priority_table = gene_priority_table,
+                       scData = pbmc_3k,
+                       cell_level = "Top",
+                       core_cell_cutoff = 2,
+                       similarity_threshold = 1,
+                       accepted_doubles_table = accepted_doubles_table) 
+```
+
+
+```{r}
+pbmc_3k <- odin_cluster_scoring(pbmc_3k, "seurat_clusters")
+```
+
+```{r}
+p = DimPlot(pbmc_3k, reduction = "umap", label = T, repel = T, group.by = 'odin_classification')      + ggtitle("scODIN_results") +
+  theme(plot.title = element_text(hjust = 0.5))   
+p
+```
+
+
+
+```{r}
+pdf("~/Desktop/240704_pbmc3k_scODIN_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+## compare overlap of labels
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "DC" = "mDC",
+  "FCGR3A+ Mono" = "Monocyte",
+  "CD14+ Mono" = "Monocyte",
+  "Platelet" = "Platelets",
+  "NK" = "NK",
+  "Memory CD4 T" = "CD4_T",
+  "Naive CD4 T" = "CD4_T",
+  "CD8 T" = "CD8_T",
+  "B" = "B cell"
+)
+
+# Function to map equivalent labels
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) 
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) 
+}
+
+# Map labels in original_idents and scODIN_results
+original_idents_mapped <- map_labels(pbmc_3k$original_idents, equivalent_labels)
+scODIN_results_mapped <- map_labels(pbmc_3k$scODIN_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scODIN_results_mapped_char <- as.character(scODIN_results_mapped)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scODIN_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+# Haniffa dataset
+```{r}
+library(SeuratDisk)
+gc()
+Sys.time()
+pbmc_hani <- LoadH5Seurat("/Volumes/G-DRIVE ArmorATD/public_h5ad/haniffa21.processed.h5seurat")
+Sys.time()
+```
+
+```{r}
+scData = pbmc_hani
+rm(pbmc_hani)
+
+# normalize Seurat object
+gc()
+scData <- NormalizeData(scData)
+
+#scale the Seurat data
+all.genes <- rownames(scData)
+gc()
+Sys.time()
+scData <- ScaleData(scData, features = all.genes)
+Sys.time()
+```
+
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scData)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scData), ]
+
+# Downsample Seurat object to same genes
+scData_ds <- scData[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scData_ds <- scData_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scData)[2])
+colnames(scODIN_score_all) <- colnames(scData)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scData_sub <- scData_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scData_sub <- scData_sub[order(rownames(scData_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scData)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scData_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scData_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 2
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 0.1
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scData <- AddMetaData(scData, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scData <- AddMetaData(scData, single_labels, col.name = "single_labels")
+scData <- AddMetaData(scData, double_labels, col.name = "double_labels")
+scData <- AddMetaData(scData, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r}
+table(scData$final_labels)
+```
+
+## simplify final double labels
+```{r}
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels in scData$final_labels
+scData$final_labels <- ifelse(scData$final_labels %in% names(replacement_vector),
+                             replacement_vector[scData$final_labels],
+                             scData$final_labels)
+```
+
+```{r}
+table(scData$final_labels)
+```
+
+## combining cell number and scODIN_score per cluster for a cluster-labeling
+```{r}
+scData <- odin_cluster_scoring(scData, "initial_clustering")
+```
+
+## Show scODIN defined core cell types on the UMAP
+```{r, fig.width=12, fig.height=12, eval = F}
+plots <- lapply(unique_cell_types, function(cell_type) {
+  FeaturePlot(scData, cell_type, min.cutoff = 0)
+})
+
+plot_grid(plotlist = plots)
+```
+
+## compare overlap of labels, clustering level
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "CD8" = "CD8_T",
+  "CD4" = "CD4_T",
+  "DCs" = "mDC",
+  "Platelets" = "Platelet",
+  "CD14" = "Monocyte",
+  "CD16" = "Monocyte",
+  "Treg" = "CD4_T",
+  "NK_56hi" = "NK",
+  "NK_16hi" = "NK",
+  "RBC" = "Erythrocyte",
+  "B_cell" = "B cell",
+  "Lymph_prolif" = "Proliferating",
+  "Mono_prolif" = "Proliferating"
+)
+
+# Function to map equivalent labels
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) 
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) 
+}
+
+# Map labels in original_idents and scODIN_results
+original_idents_mapped <- map_labels(scData$initial_clustering, equivalent_labels)
+scODIN_results_mapped <- map_labels(scData$scODIN_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scODIN_results_mapped_char <- as.character(scODIN_results_mapped)
+
+# Replace NA values in scODIN_results_mapped_char with "unknown"
+scODIN_results_mapped_char <- ifelse(is.na(scODIN_results_mapped_char), "unknown", scODIN_results_mapped_char)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scODIN_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+```{r, fig.width=16, fig.height=8}
+plot_grid(ncol = 2, 
+          DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'scODIN_classification'),
+          DimPlot(scData, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'initial_clustering')
+          )
+```
+
+
+# Now let's try with CD4_T only, and use the sub-level scODIN
+```{r}
+scCD4 <- scData[, scData$full_clustering %in% c("CD4.CM","CD4.EM","CD4.IL22","CD4.Naive","CD4.Prolif","CD4.Tfh","CD4.Th1","CD4.Th17","CD4.Th2","Treg")]
+scCD4 <- scCD4[, scCD4$initial_clustering %in% c("CD4","Treg")]
+```
+
+```{r, eval=F}
+# export seurat object
+saveRDS(scCD4,"~/Desktop/240712_Haniffa_scCD4_seuratObject.rds")
+```
+
+```{r, eval=F}
+# load Seurat object
+scCD4 = readRDS("~/Desktop/240712_Haniffa_scCD4_seuratObject.rds")
+```
+
+
+### UMAP of the data
+```{r}
+scCD4 <- FindVariableFeatures(scCD4, selection.method = "vst", nfeatures = 2000)
+scCD4 <- RunPCA(scCD4, features = VariableFeatures(object = scCD4))
+
+# Check number of PC components (we selected 10 PCs for downstream analysis, based on Elbow plot)
+ElbowPlot(scCD4)
+
+# cluster and visualize
+scCD4 <- FindNeighbors(scCD4, dims = 1:10)
+scCD4 <- FindClusters(scCD4, resolution = 0.8)
+scCD4 <- RunUMAP(scCD4, dims = 1:10)
+DimPlot(scCD4, reduction = "umap")
+```
+
+```{r}
+DimPlot(scCD4, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'full_clustering')        
+```
+
+## batch correction
+```{r}
+library(harmony)
+scCD4 <- RunHarmony(scCD4, "Site")
+```
+
+```{r}
+scCD4 <- RunUMAP(scCD4, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+DimPlot(scCD4, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'Site')   + NoLegend() 
+DimPlot(scCD4, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'full_clustering')        
+```
+
+
+```{r}
+p = DimPlot(scCD4, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'full_clustering')  + ggtitle("original annotation") +
+  theme(plot.title = element_text(hjust = 0.5))  
+p
+```
+
+```{r}
+pdf("~/Desktop/240726_Haniffa_CD4_original_umap.pdf",width=6,height=4 ,paper='special') 
+p
+dev.off()
+```
+
+# 240712 - scODIN code NO tier system. to show how it would be without tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "CD4_T", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scCD4)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scCD4), ]
+
+# Downsample Seurat object to same genes
+scCD4_ds <- scCD4[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scCD4_ds <- scCD4_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scCD4)[2])
+colnames(scODIN_score_all) <- colnames(scCD4)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scCD4_sub <- scCD4_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scCD4_sub <- scCD4_sub[order(rownames(scCD4_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scCD4)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scCD4_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scCD4_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 5
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 1
+
+# Determine single labels, double labels, and unknowns
+for (i in 1:nrow(scODIN_score_all)) {
+  scores <- scODIN_score_all[i, ]
+  cell_types <- names(which(scores > 0))
+  num_labels <- length(cell_types)
+
+    if (num_labels == 1) {
+    single_labels[i] <- cell_types[1]
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      double_labels[i] <- paste(cell_types, collapse = "_")
+    } else {
+      single_labels[i] <- names(which.max(scores))
+    }
+  } 
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scCD4 <- AddMetaData(scCD4, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scCD4 <- AddMetaData(scCD4, single_labels, col.name = "single_labels")
+scCD4 <- AddMetaData(scCD4, double_labels, col.name = "double_labels")
+scCD4 <- AddMetaData(scCD4, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+```
+
+
+```{r, fig.width=20, fig.height=4}
+# original labels
+t1_genes = c("FOXP3", "CXCR5", "IL22")
+VlnPlot(scCD4, features = t1_genes, group.by = "full_clustering") +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241002_Haniffa_CD4_original_violin_CXCR5_Foxp3_IL22.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("FOXP3", "CXCR5", "IL22"), group.by = "full_clustering", raster = T) +NoLegend()
+dev.off()
+```
+
+
+```{r, fig.width=20, fig.height=4}
+# original labels
+treg_genes = c("IKZF2", "CTLA4", "IL2RA")
+VlnPlot(scCD4, features = treg_genes, group.by = "full_clustering", ncol =3) +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241011_pdfs/241011_Haniffa_CD4_original_violin_IKZF2_CTLA4_IL2RA.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("IKZF2", "CTLA4", "IL2RA"), group.by = "full_clustering", raster = T) +NoLegend()
+dev.off()
+```
+
+
+```{r, fig.width=20, fig.height=4}
+# no tier 
+t1_genes = c("FOXP3", "CXCR5", "IL22")
+VlnPlot(scCD4, features = t1_genes, group.by = "single_labels") +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_NoTier_violin_CXCR5_Foxp3_IL22.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("FOXP3", "CXCR5", "IL22"), group.by = "single_labels", raster = T) +NoLegend()
+dev.off()
+```
+
+```{r, fig.width=20, fig.height=4}
+# no tier 
+treg_genes = c("IKZF2", "CTLA4", "IL2RA")
+VlnPlot(scCD4, features = treg_genes, group.by = "single_labels", ncol=3) +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_NoTier_violin_IKZF2_CTLA4_IL2RA.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("IKZF2", "CTLA4", "IL2RA"), group.by = "single_labels", raster = T) +NoLegend()
+dev.off()
+```
+
+
+
+```{r, fig.width=16, fig.height=4}
+#selected ones
+t13_genes = c("FOXP3", "CXCR5", "CCR7", "FAS","TBX21", "IFNG", "PTGDR2", "IL4", "IL5", "IL13","RORC","IL17A","IL22")
+
+remove_cell_types <- c("CD4_CM", "CD4_EM", "CD4_naive", "CD4_CTL", "CD4_CTLA4hi_Tconv", "unknown")
+scCD4_filtered <- subset(scCD4, single_labels %in% remove_cell_types, invert = TRUE)
+
+# Define the desired order of cell types
+cell_type_order <- c("nTreg", "eTreg","Tfr", "Tfh","Th1", "Th2", "Th17", "Th22")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$single_labels <- factor(scCD4_filtered$single_labels, levels = cell_type_order)
+
+# Create a heatmap grouped by single labels
+dh1 = DoHeatmap(scCD4_filtered, features = t13_genes, group.by = "single_labels", size = 3, angle = 90) + NoLegend() +   scale_fill_continuous(type = "viridis")
+dh1 
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_single_cell_heatmap_noTierSystem.pdf",width=4,height=2.2 ,paper='special') 
+dh1
+dev.off()
+```
+
+```{r}
+sum_num2 = table(scCD4$single_labels)
+sum_num2 = as.data.frame(sum_num2)
+
+g1 = ggplot(sum_num2, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "# of cells", title = "") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", dim(sum_num2)[1]))) +
+  scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + NoLegend()
+
+g1
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_single_cell_bars_noTiers.pdf",width=5,height=4 ,paper='special') 
+g1
+dev.off()
+```
+
+```{r}
+scCD4$full_clustering = droplevels(scCD4$full_clustering)
+sum_num1 = table(scCD4$full_clustering)
+sum_num1 = as.data.frame(sum_num1)
+
+g1 = ggplot(sum_num1, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "# of cells", title = "") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", dim(sum_num1)[1]))) +
+  scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + NoLegend()
+
+g1
+```
+
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "CD4_T", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scCD4)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scCD4), ]
+
+# Downsample Seurat object to same genes
+scCD4_ds <- scCD4[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scCD4_ds <- scCD4_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scCD4)[2])
+colnames(scODIN_score_all) <- colnames(scCD4)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scCD4_sub <- scCD4_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scCD4_sub <- scCD4_sub[order(rownames(scCD4_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scCD4)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scCD4_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scCD4_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 5
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 1
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scCD4 <- AddMetaData(scCD4, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scCD4 <- AddMetaData(scCD4, single_labels, col.name = "single_labels")
+scCD4 <- AddMetaData(scCD4, double_labels, col.name = "double_labels")
+scCD4 <- AddMetaData(scCD4, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r, fig.width=16, fig.height=4}
+#selected ones
+t13_genes = c("FOXP3", "CXCR5", "CCR7", "FAS","TBX21", "IFNG", "PTGDR2", "IL4", "IL5", "IL13","RORC","IL17A","IL22")
+
+remove_cell_types <- c("CD4_CM", "CD4_EM", "CD4_naive", "CD4_CTL", "CD4_CTLA4hi_Tconv", "unknown")
+scCD4_filtered <- subset(scCD4, single_labels %in% remove_cell_types, invert = TRUE)
+
+# Define the desired order of cell types
+cell_type_order <- c("nTreg", "eTreg","Tfr", "Tfh","Th1", "Th2", "Th17", "Th22")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$single_labels <- factor(scCD4_filtered$single_labels, levels = cell_type_order)
+
+# Create a heatmap grouped by single labels
+dh1 = DoHeatmap(scCD4_filtered, features = t13_genes, group.by = "single_labels", size = 3, angle = 90) + NoLegend() +   scale_fill_continuous(type = "viridis")
+dh1 
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_single_cell_heatmap_withTierSystem.pdf",width=4,height=2.2 ,paper='special') 
+dh1
+dev.off()
+```
+
+
+```{r}
+sum_num3 = table(scCD4$single_labels)
+sum_num3 = as.data.frame(sum_num3)
+
+g1 = ggplot(sum_num3, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "# of cells", title = "") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", dim(sum_num3)[1]))) +
+  scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + NoLegend()
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_single_cell_bars.pdf",width=5,height=4 ,paper='special') 
+g1
+dev.off()
+```
+
+
+```{r, fig.width=20, fig.height=4}
+# with tier 
+t1_genes = c("FOXP3", "CXCR5", "IL22")
+VlnPlot(scCD4, features = t1_genes, group.by = "single_labels") +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_withTier_violin_CXCR5_Foxp3_IL22_simpleTier.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("FOXP3", "CXCR5", "IL22"), group.by = "single_labels", raster = T) +NoLegend()
+dev.off()
+```
+
+
+```{r, fig.width=20, fig.height=4}
+# with tier 
+treg_genes = c("IKZF2", "CTLA4", "IL2RA")
+VlnPlot(scCD4, features = treg_genes, group.by = "single_labels", ncol=3) +NoLegend()
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_withTier_violin_IKZF2_CTLA4_IL2RA.pdf",width=12,height=4 ,paper='special') 
+VlnPlot(scCD4, features = c("IKZF2", "CTLA4", "IL2RA"), group.by = "single_labels", raster = T) +NoLegend()
+dev.off()
+```
+
+
+
+## simplify final double labels
+```{r}
+table(scCD4$final_labels)
+```
+
+```{r}
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels in scCD4$final_labels
+scCD4$final_labels <- ifelse(scCD4$final_labels %in% names(replacement_vector),
+                             replacement_vector[scCD4$final_labels],
+                             scCD4$final_labels)
+```
+
+```{r}
+table(scCD4$final_labels)
+```
+
+```{r, fig.width=20, fig.height=4}
+# with tier 
+t1_genes = c("FOXP3", "CXCR5", "IL22")
+VlnPlot(scCD4, features = t1_genes, group.by = "final_labels") +NoLegend()
+```
+
+## combine the three bars dataset
+```{r}
+# Perform full join on sum_num1 and sum_num2
+combined_df <- full_join(sum_num1, sum_num2, by = "Var1", suffix = c("_num1", "_num2"))
+
+# Perform full join on the result with sum_num3
+combined_df <- full_join(combined_df, sum_num3, by = "Var1", suffix = c("", "_num3"))
+
+# Rename the columns for consistency
+colnames(combined_df) <- c("Var1", "original", "scODIN_noTier", "scODIN")
+library(reshape2)
+combined_df = melt(combined_df)
+```
+
+```{r}
+filtered_df <- combined_df %>%
+  filter(!(Var1 %in% c("CD4.EM", "CD4.CM", "unknown", "CD4.Naive", "CD4.Prolif", "CD4_CM", "CD4_CTLA4hi_Tconv", "CD4_EM", "CD4_naive", "CD4_CTL")))
+
+filtered_df$Var1 <- (
+  gsub("CD4.Tfh", "Tfh", 
+  gsub("CD4.Th1", "Th1",
+  gsub("CD4.Th2", "Th2",
+  gsub("CD4.Th17", "Th17",
+  gsub("CD4.IL22", "Th22",
+ filtered_df$Var1))))))
+
+upper_cutoff = 1700
+
+desired_order <- c("Treg", "nTreg", "eTreg", "Tfr", "Tfh", "Th1", "Th2", "Th17", "Th22")  
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("original", "scODIN_noTier", "scODIN")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of cells", title = "", fill = "algorithm") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 3))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_text(aes(label = label1), 
+            position = position_dodge(width = 0.9), vjust = 0.5, angle = 90, hjust = 1) +
+  coord_cartesian(clip = "off", ylim = c(0, upper_cutoff+ 3))
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_compare_algorithms_noTier_bars.pdf",width=6,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+## 241002 - put the remaining cell types as supplementary figure
+```{r}
+filtered_df <- combined_df %>%
+  filter((Var1 %in% c("CD4.EM", "CD4.CM", "CD4.Naive", "CD4_CM", "CD4_EM", "CD4_naive")))
+
+filtered_df$Var1 <- (
+  gsub("CD4.EM", "CD4_EM", 
+  gsub("CD4.CM", "CD4_CM",
+  gsub("CD4.Naive", "CD4_naive",
+ filtered_df$Var1))))
+
+upper_cutoff = 17000000 # I just reused the code from another figure, but did not want the cutoff here.
+
+desired_order <- c("CD4_naive", "CD4_CM", "CD4_EM")  
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("original", "scODIN_noTier", "scODIN")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of cells", title = "", fill = "algorithm") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 3))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_text(aes(label = label1), 
+            position = position_dodge(width = 0.9), vjust = 0.5, angle = 90, hjust = 1)
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_compare_algorithms_noTier_bars_generic_cellTypes.pdf",width=4,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+```{r, fig.width=8, fig.height=4}
+# Create a heatmap grouped by full clustering
+scCD4$full_clustering = droplevels(scCD4$full_clustering)
+
+remove_cell_types <- c("CD4.CM", "CD4.EM", "CD4.Naive", "CD4.Prolif")
+scCD4_filtered <- subset(scCD4, full_clustering %in% remove_cell_types, invert = TRUE)
+
+# Define the desired order of cell types
+cell_type_order <- c("Treg","CD4.Tfh","CD4.Th1", "CD4.Th2", "CD4.Th17", "CD4.IL22")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$full_clustering <- factor(scCD4_filtered$full_clustering, levels = cell_type_order)
+
+# Create a heatmap grouped by single labels
+dh2 = DoHeatmap(scCD4_filtered, features = t13_genes, group.by = "full_clustering", size = 3, angle = 45) + NoLegend() +   scale_fill_continuous(type = "viridis")
+dh2
+```
+
+```{r}
+pdf("~/Desktop/241002_Haniffa_CD4_original_single_cell_heatmap.pdf",width=4,height=2.2 ,paper='special') 
+dh2
+dev.off()
+```
+
+
+#### original but without Tfh and Th22
+```{r, fig.width=8, fig.height=4}
+# Create a heatmap grouped by full clustering
+scCD4$full_clustering = droplevels(scCD4$full_clustering)
+
+remove_cell_types <- c("CD4.CM", "CD4.EM", "CD4.Naive", "CD4.Prolif","CD4.Tfh","CD4.IL22")
+scCD4_filtered <- subset(scCD4, full_clustering %in% remove_cell_types, invert = TRUE)
+
+# Define the desired order of cell types
+cell_type_order <- c("Treg","CD4.Th1", "CD4.Th2", "CD4.Th17")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$full_clustering <- factor(scCD4_filtered$full_clustering, levels = cell_type_order)
+
+# Create a heatmap grouped by single labels
+dh2 = DoHeatmap(scCD4_filtered, features = t13_genes, group.by = "full_clustering", size = 3, angle = 45) + NoLegend() +   scale_fill_continuous(type = "viridis")
+dh2
+```
+
+```{r}
+pdf("~/Desktop/241002_Haniffa_CD4_original_single_cell_heatmap_withoutTfhTh22.pdf",width=4,height=2.2 ,paper='special') 
+dh2
+dev.off()
+```
+
+## 240722 - accepted double label examples
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "CD4_T", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scCD4)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scCD4), ]
+
+# Downsample Seurat object to same genes
+scCD4_ds <- scCD4[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scCD4_ds <- scCD4_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scCD4)[2])
+colnames(scODIN_score_all) <- colnames(scCD4)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scCD4_sub <- scCD4_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scCD4_sub <- scCD4_sub[order(rownames(scCD4_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scCD4)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scCD4_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scCD4_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 5
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 5
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scCD4 <- AddMetaData(scCD4, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scCD4 <- AddMetaData(scCD4, single_labels, col.name = "single_labels")
+scCD4 <- AddMetaData(scCD4, double_labels, col.name = "double_labels")
+scCD4 <- AddMetaData(scCD4, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r}
+remove_cell_types <- c("CD4_CM", "CD4_EM", "CD4_naive", "CD4_CTL", "unknown","CD4_CM_CD4_EM", "CD4_CM_CD4_naive",  "eTreg_nTreg", "Th22", "CD4_CM_EM_int", "CD4_naive_CM_int", "neTreg_int", "eTreg", "nTreg")
+scCD4_filtered <- subset(scCD4, final_labels %in% remove_cell_types, invert = TRUE)
+```
+
+```{r}
+# Define the desired order of cell types
+cell_type_order <- c("Th1","Th17","Th17_Th1", "Th17_Th2", "Th2", "Tfh_Th1","Tfh_Th17", "Tfh", "Tfr", "Tfr_nTreg", "Tfr_eTreg")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$final_labels <- factor(scCD4_filtered$final_labels, levels = cell_type_order)
+```
+
+```{r}
+VlnPlot(scCD4, features = "FOXP3", group.by = "final_labels", raster = T) +NoLegend()
+```
+
+```{r}
+table(scCD4_filtered$final_labels)
+```
+
+```{r}
+table(scCD4$final_labels)
+```
+
+```{r, eval = F}
+## simplify final double labels
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels in scCD4$final_labels
+scCD4$final_labels <- ifelse(scCD4$final_labels %in% names(replacement_vector),
+                             replacement_vector[scCD4$final_labels],
+                             scCD4$final_labels)
+```
+
+```{r, fig.width=16, fig.height=4}
+goi_genes = c("TBX21","RORC", "PTGDR2", "CXCR5", "FOXP3")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", ncol = 5, raster = T) +NoLegend()
+vp
+```
+
+```{r, eval = F}
+pdf("~/Desktop/241009_pdfs/241009_Haniffa_CD4_scODIN_single_accepted_doubles_violin_cut4_sim0_raster_selectcelltypes.pdf",width=16,height=3 ,paper='special') 
+vp 
+dev.off()
+```
+
+```{r, fig.width=16, fig.height=4}
+goi_genes = c("Th1","Th17", "Th2")
+
+VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels") +NoLegend()
+```
+
+```{r}
+library(tidyr)
+```
+
+```{r}
+Th_summary <- read_excel("~/Desktop/241008_accepted_double_labels_sim_cutoff_numbers.xlsx", sheet = "cutoff = 5")
+Th_summary <- Th_summary %>%
+  pivot_longer(cols = -sim_cutoff, names_to = "cell_type", values_to = "value")
+```
+
+```{r}
+## simplify final double labels
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels 
+Th_summary$cell_type <- ifelse(Th_summary$cell_type %in% names(replacement_vector),
+                             replacement_vector[Th_summary$cell_type],
+                             Th_summary$cell_type)
+```
+
+```{r}
+Th_summary <- Th_summary %>%
+  filter(cell_type %in% c("Tfh_Th1", "Tfh_Th17", "Tfr_eTreg","Tfr_nTreg","Th17_Th1","Th17_Th2"))
+
+
+Th_summary <- Th_summary %>%
+  filter(!sim_cutoff %in% c("100"))
+
+# Define the desired order of cell types
+cell_type_order <- c("Th1_Th17","Th2_Th17", "Tfh_Th1", "Tfh_Th17")
+
+# Set the factor levels for the identity classes
+Th_summary$cell_type <- factor(Th_summary$cell_type, levels = cell_type_order)
+
+g1 = ggplot(Th_summary, aes(x = cell_type, y = value, fill = as.factor(sim_cutoff))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "# of cells", title = "") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 6))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241009_pdfs/241009_Haniffa_CD4_scODIN_accepted_doubles_cutoff5.pdf",width=6,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+
+## 240722 - intermediate cell type label examples naive-CM-EM
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "CD4_T", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scCD4)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scCD4), ]
+
+# Downsample Seurat object to same genes
+scCD4_ds <- scCD4[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scCD4_ds <- scCD4_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scCD4)[2])
+colnames(scODIN_score_all) <- colnames(scCD4)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scCD4_sub <- scCD4_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scCD4_sub <- scCD4_sub[order(rownames(scCD4_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scCD4)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scCD4_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scCD4_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 5
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 1
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scCD4 <- AddMetaData(scCD4, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scCD4 <- AddMetaData(scCD4, single_labels, col.name = "single_labels")
+scCD4 <- AddMetaData(scCD4, double_labels, col.name = "double_labels")
+scCD4 <- AddMetaData(scCD4, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r}
+## simplify final double labels
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels in scCD4$final_labels
+scCD4$final_labels <- ifelse(scCD4$final_labels %in% names(replacement_vector),
+                             replacement_vector[scCD4$final_labels],
+                             scCD4$final_labels)
+```
+
+```{r}
+remove_cell_types <- c("CD4_CTL", "unknown","eTreg", "eTreg_nTreg", "nTreg", "Tfh", "Tfr", "Th22", "Th1", "Th2", "Th17", "Th1_Th17", "Th1_Th2", "Th17_Th2", "neTreg_int", "Tfh_Th1", "Tfh_Th17", "Th2_Th17")
+scCD4_filtered <- subset(scCD4, final_labels %in% remove_cell_types, invert = TRUE)
+
+# Define the desired order of cell types
+cell_type_order <- c("CD4_naive", "CD4_naive_CM_int","CD4_CM", "CD4_CM_EM_int","CD4_EM")
+
+# Set the factor levels for the identity classes
+scCD4_filtered$final_labels <- factor(scCD4_filtered$final_labels, levels = cell_type_order)
+```
+
+```{r, fig.width=16, fig.height=20}
+goi_genes = c("CCR7","FAS", "TCF7", "TRADD", "S100A4", "BCL2", "GADD45B", "IER2", "SELL", "ISG20", "KLRG1", "LEF1", "IL7R", "CX3CR1", "EOMES", "FASLG", "IL6ST", "SORCS3", "GZMB", "CXCR3", "CD44", "CD69")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", pt.size = 0) +NoLegend()
+vp
+```
+
+```{r, fig.width=16, fig.height=8}
+goi_genes = c("CCR7","SELL","LEF1","TCF7", "CD69", "S100A4", "GADD45B", "TRADD", "KLRG1","FAS")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", pt.size = 0, ncol = 5) +NoLegend()  
+vp
+```
+
+```{r, fig.width=16, fig.height=8}
+goi_genes = c("CCR7","SELL","LEF1","TCF7", "CD69", "S100A4", "KLRG1","FAS")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", pt.size = 0, ncol = 4) +NoLegend()  
+vp
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_intermediate_CM_EM.pdf",width=10,height=6 ,paper='special') 
+vp
+dev.off()
+```
+
+
+### UMAP
+```{r}
+set.seed(my_seed)
+scCD4_filtered <- FindVariableFeatures(scCD4_filtered, selection.method = "vst", nfeatures = 2000)
+scCD4_filtered <- RunPCA(scCD4_filtered, features = VariableFeatures(object = scCD4_filtered))
+
+# Check number of PC components (we selected 10 PCs for downstream analysis, based on Elbow plot)
+ElbowPlot(scCD4_filtered)
+
+# cluster and visualize
+scCD4_filtered <- FindNeighbors(scCD4_filtered, dims = 1:10)
+scCD4_filtered <- FindClusters(scCD4_filtered, resolution = 0.8)
+scCD4_filtered <- RunUMAP(scCD4_filtered, dims = 1:10)
+DimPlot(scCD4_filtered, reduction = "umap")
+```
+
+```{r}
+DimPlot(scCD4_filtered, reduction = "umap", group.by = "Site")
+```
+
+## batch correction
+```{r}
+library(harmony)
+scCD4_filtered <- RunHarmony(scCD4_filtered, "Site")
+```
+
+```{r}
+scCD4_filtered <- RunUMAP(scCD4_filtered, dims = 1:10, reduction = "harmony")
+```
+
+```{r, fig.width=12, fig.height=3}
+colors <- rev(brewer.pal(n = 10, name = "Spectral"))
+
+# Create the Seurat DimPlot object
+dim_plot <- DimPlot(scCD4_filtered, reduction = "umap", label = F, repel = F, group.by = 'final_labels', split.by = 'final_labels')
+
+# Extract the ggplot object
+ggplot_obj <- dim_plot[[1]]
+
+# Extract the data from the ggplot object and rename columns
+data <- ggplot_obj$data %>%
+  rename(x = umap_1, y = umap_2)
+
+# Add the density plot layer to the ggplot object using the updated data
+ggplot_obj <- ggplot_obj + 
+  stat_density_2d(data = data, aes(x = x, y = y, fill = after_stat(nlevel)), geom = "polygon", contour = TRUE, colour = "black", bins = 10) +
+  scale_fill_distiller(palette = "Spectral", direction = -1) +
+  #scale_fill_gradientn(colors = colors) +
+  theme_classic()
+
+ggplot_obj
+
+```
+
+# Trajectory analysis
+```{r}
+library(SeuratWrappers)
+```
+
+```{r}
+#https://htmlpreview.github.io/?https://github.com/satijalab/seurat-wrappers/blob/master/docs/monocle3.html
+library(monocle3)
+
+# Convert Seurat object to Monocle3 object
+cds <- as.cell_data_set(scCD4_filtered)
+
+cds <- cluster_cells(cds)
+
+plot_cells(cds, show_trajectory_graph = FALSE)
+plot_cells(cds, color_cells_by = "partition", show_trajectory_graph = FALSE)
+
+cds <- learn_graph(cds)
+
+plot_cells(cds, label_groups_by_cluster = FALSE, label_leaves = FALSE, label_branch_points = FALSE)
+
+# Order cells in pseudotime
+cds <- order_cells(cds)
+
+# Extract pseudotime information and add it to the Seurat object metadata
+pseudotime <- pseudotime(cds)
+scCD4_filtered <- AddMetaData(scCD4_filtered, metadata = pseudotime, col.name = "pseudotime")
+```
+
+```{r}
+DimPlot(scCD4_filtered, reduction = "umap", label = F, repel = F, group.by = 'pseudotime', split.by = 'final_labels')   + NoLegend()
+```
+
+```{r}
+vp =  VlnPlot(scCD4_filtered, features = "pseudotime", group.by = "final_labels", pt.size = 0, ncol = 4, cols = viridis::viridis(n = 5))
+vp
+```
+
+```{r}
+pdf(paste0("~/Desktop/241017_pdfs/241017_Haniffa_CD4_CM_EM_pseudotime.pdf"),width=7,height=4,paper='special') 
+vp
+dev.off()
+```
+
+## 240722 - intermediate cell type label examples - Treg
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "CD4_T", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(scCD4)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(scCD4), ]
+
+# Downsample Seurat object to same genes
+scCD4_ds <- scCD4[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+scCD4_ds <- scCD4_ds[["RNA"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(scCD4)[2])
+colnames(scODIN_score_all) <- colnames(scCD4)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  scCD4_sub <- scCD4_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    scCD4_sub <- scCD4_sub[order(rownames(scCD4_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(scCD4)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- scCD4_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- scCD4_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 5
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 2
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  scCD4 <- AddMetaData(scCD4, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+scCD4 <- AddMetaData(scCD4, single_labels, col.name = "single_labels")
+scCD4 <- AddMetaData(scCD4, double_labels, col.name = "double_labels")
+scCD4 <- AddMetaData(scCD4, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r}
+remove_cell_types <- c("CD4_CTL", "unknown", "Tfh", "Tfr", "Th22", "Th1", "Th2", "Th17", "Th17_Th1", "Th17_Th2", "Tfh_Th1", "Tfh_Th17", "Th2_Th17", "CD4_naive", "CD4_naive_CM_int","CD4_CM", "CD4_CM_EM_int","CD4_EM", "CD4_CM_CD4_EM","CD4_CM_CD4_naive",  "Tfr_eTreg", "Tfr_nTreg")
+
+# Define the desired order of cell types
+cell_type_order <- c("nTreg", "eTreg_nTreg", "eTreg" )
+
+scCD4_filtered <- subset(scCD4, final_labels %in% cell_type_order, invert = F)
+
+# Set the factor levels for the identity classes
+scCD4_filtered$final_labels <- factor(scCD4_filtered$final_labels, levels = cell_type_order)
+```
+
+```{r, fig.width=16, fig.height=8}
+goi_genes = c("CCR7","SELL","LEF1","TCF7", "CD69", "S100A4", "GADD45B", "TRADD", "KLRG1","FAS")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", pt.size = 0, ncol = 5) +NoLegend()  
+vp
+```
+
+```{r, fig.width=16, fig.height=4}
+goi_genes = c("FOXP3","CCR7", "TCF7", "FAS")
+
+vp =  VlnPlot(scCD4_filtered, features = goi_genes, group.by = "final_labels", pt.size = .0001, alpha = 0.6, raster = TRUE, ncol = 4) +NoLegend()
+vp
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_scODIN_intermediate_Treg.pdf",width=8,height=3 ,paper='special') 
+vp
+dev.off()
+```
+
+```{r}
+#batch correction
+scCD4_filtered <- RunHarmony(scCD4_filtered, "Site")
+```
+
+```{r}
+scCD4_filtered <- RunUMAP(scCD4_filtered, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+DimPlot(scCD4_filtered, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels')    
+DimPlot(scCD4_filtered, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'Site')    
+
+```
+
+```{r,fig.width=12, fig.height=3}
+dp = DimPlot(scCD4_filtered, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels', split.by = 'final_labels')    
+dp
+```
+
+```{r, fig.width=8, fig.height=3}
+colors <- rev(brewer.pal(n = 10, name = "Spectral"))
+
+# Create the Seurat DimPlot object
+dim_plot <- DimPlot(scCD4_filtered, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels', split.by = 'final_labels')
+
+# Extract the ggplot object
+ggplot_obj <- dim_plot[[1]]
+
+# Extract the data from the ggplot object and rename columns
+data <- ggplot_obj$data %>%
+  rename(x = umap_1, y = umap_2) # not sure why this is so buggy. sometimes it works, and other times it does not...
+
+# Add the density plot layer to the ggplot object using the updated data
+ggplot_obj <- ggplot_obj + 
+  stat_density_2d(data = data, aes(x = x, y = y, fill = after_stat(nlevel)), geom = "polygon", contour = TRUE, colour = "black", bins = 10) +
+  scale_fill_distiller(palette = "Spectral", direction = -1) +
+  #scale_fill_gradientn(colors = colors) +
+  theme_classic()
+
+# Print the final plot
+print(ggplot_obj)
+```
+
+
+
+# Trajectory analysis
+```{r}
+library(SeuratWrappers)
+```
+
+```{r}
+#https://htmlpreview.github.io/?https://github.com/satijalab/seurat-wrappers/blob/master/docs/monocle3.html
+library(monocle3)
+
+# Convert Seurat object to Monocle3 object
+cds <- as.cell_data_set(scCD4_filtered)
+
+cds <- cluster_cells(cds)
+
+plot_cells(cds, show_trajectory_graph = FALSE)
+plot_cells(cds, color_cells_by = "partition", show_trajectory_graph = FALSE)
+
+cds <- learn_graph(cds)
+
+plot_cells(cds, label_groups_by_cluster = FALSE, label_leaves = FALSE, label_branch_points = FALSE)
+
+# Order cells in pseudotime
+cds <- order_cells(cds)
+
+# Extract pseudotime information and add it to the Seurat object metadata
+pseudotime <- pseudotime(cds)
+scCD4_filtered <- AddMetaData(scCD4_filtered, metadata = pseudotime, col.name = "pseudotime")
+```
+
+```{r}
+DimPlot(scCD4_filtered, reduction = "umap", label = F, repel = F, group.by = 'pseudotime', split.by = 'final_labels')   + NoLegend()
+```
+
+```{r}
+vp =  VlnPlot(scCD4_filtered, features = "pseudotime", group.by = "final_labels", pt.size = 0, ncol = 4, cols = viridis::viridis(n = 3))
+vp
+```
+
+```{r}
+pdf(paste0("~/Desktop/241009_pdfs/241009_Haniffa_CD4_Treg_pseudotime.pdf"),width=7,height=3,paper='special') 
+vp
+dev.off()
+```
+
+# 240724 - Now do the inference
+# 241003 - first downsample the core cells to have similar number of cells
+
+## generate new object with only core cell types
+```{r}
+pbmc_CD4_core = scCD4[, !scCD4$final_labels %in% c("unknown")]
+```
+
+```{r}
+table(pbmc_CD4_core$final_labels)
+```
+
+```{r}
+DimPlot(pbmc_CD4_core, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels')  + ggtitle(NULL)
+```
+
+## random downsampling
+```{r}
+# Get the number of cells per final label
+cell_counts <- table(pbmc_CD4_core$final_labels)
+
+# Determine the median count
+target_count <- median(cell_counts)
+
+# Downsample each label to the target count
+cells_to_keep <- c()
+set.seed(123) # For reproducibility
+
+for (label in names(cell_counts)) {
+  # Get cells for the current label using Idents()
+  label_cells <- colnames(pbmc_CD4_core)[pbmc_CD4_core$final_labels == label]
+  
+  # Downsample if the number of cells is greater than the target count
+  if (length(label_cells) > target_count) {
+    downsampled_cells <- sample(label_cells, target_count)
+  } else {
+    downsampled_cells <- label_cells
+  }
+  
+  # Combine cells to keep
+  cells_to_keep <- c(cells_to_keep, downsampled_cells)
+}
+
+# Subset the Seurat object with the downsampled cells
+pbmc_CD4_core_downsampled <- subset(pbmc_CD4_core, cells = cells_to_keep)
+
+# Check the new cell counts
+table(pbmc_CD4_core_downsampled$final_labels)
+```
+```{r}
+DimPlot(pbmc_CD4_core_downsampled, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels')  + ggtitle(NULL)
+```
+
+#### PCA on core T cells
+```{r}
+pbmc_CD4_core_downsampled <- FindVariableFeatures(pbmc_CD4_core_downsampled, selection.method = "vst", nfeatures = 2000, verbose = T,assay = "RNA")
+pbmc_CD4_core_downsampled <- ScaleData(pbmc_CD4_core_downsampled, assay = "RNA")
+pbmc_CD4_core_downsampled <- RunPCA(pbmc_CD4_core_downsampled, npcs = 50, reduction.name = "core_PCA", assay = "RNA",verbose = T)
+```
+
+#### UMAP
+```{r}
+pbmc_CD4_core_downsampled <- RunUMAP(pbmc_CD4_core_downsampled, reduction.name = "core_umap",
+                  reduction = "core_PCA", 
+                  assay = "RNA",
+                   dims = 1:50,
+                   n.components=2,
+                   n.neighbors=30,
+                   n.epochs=200,
+                   min.dist=0.3,
+                   learning.rate=1,
+                   spread=1,
+                  return.model=TRUE) #need to be present for transferring data to this reference later
+
+```
+
+### need to batch correct this one as well
+```{r}
+#batch correction
+pbmc_CD4_core_downsampled <- RunHarmony(pbmc_CD4_core_downsampled, "Site")
+```
+
+```{r}
+pbmc_CD4_core_downsampled <- RunUMAP(pbmc_CD4_core_downsampled, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+dp = DimPlot(pbmc_CD4_core_downsampled, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels')  + ggtitle(NULL)
+dp
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_allTerms_downsampled_umap_cu5_sim1.pdf",width=5,height=3.5 ,paper='special') 
+dp
+dev.off()
+```
+
+## Place undefined CD4 T cells onto the core UMAP and transfer IDs
+```{r}
+pbmc_undefined =  scCD4[, scCD4$final_labels %in% c("unknown")]
+```
+
+```{r, fig.width=6, fig.height=4}
+DimPlot(pbmc_undefined, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels')  + ggtitle(NULL)
+```
+
+## run ANNOY algorithm
+```{r}
+start_time <- Sys.time()
+start_time
+
+anchors <- FindTransferAnchors(
+  reference = pbmc_CD4_core_downsampled,
+  query = pbmc_undefined,
+  normalization.method = "LogNormalize",
+  reference.reduction = "core_PCA",
+  npcs = 50, 
+  dims = 1:50,
+  k.filter=NA,
+  mapping.score.k = TRUE,
+  nn.method = "annoy"
+)
+
+
+pbmc_undefined_transf = TransferData(
+  anchorset = anchors,
+  refdata = list(
+    celltype.l1 = "final_labels" 
+    ),
+  reference = pbmc_CD4_core_downsampled,
+  query = pbmc_undefined,
+  weight.reduction = "pcaproject",
+  l2.norm = FALSE,
+  dims = NULL,
+  k.weight = 50,
+  sd.weight = 1,
+  eps = 0,
+  n.trees = 50,
+  verbose = TRUE,
+  slot = "data",
+  prediction.assay = TRUE,
+  only.weights = FALSE,
+  store.weights = TRUE
+)
+
+pbmc_undefined_transf[["predictions"]] = pbmc_undefined_transf@assays$prediction.score.celltype.l1
+
+pbmc_undefined_transf$predicted.id_annoy = apply_score_filter(
+  pbmc_undefined_transf,
+  assay = "predictions",
+  slot = "data",
+  score.filter = 0.4
+)
+
+
+# store as an independent vector, since TransferData removes the previous one
+predicted.id_annoy = pbmc_undefined_transf$predicted.id_annoy
+end_time <- Sys.time()
+message("ANNOY calculation has finished in ", format(end_time - start_time))
+```
+
+```{r}
+sum_num_all_ds = table(pbmc_undefined_transf$predicted.id_annoy)
+sum_num_all_ds = as.data.frame(sum_num_all_ds)
+
+g1 = ggplot(sum_num_all_ds, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "", y = "# of cells", title = "") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", dim(sum_num_all_ds)[1]))) +
+  scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + NoLegend()
+
+g1
+```
+
+
+```{r, eval=F}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_bars_allTerms_downsampled_scoreFilter04_simpleTier_intLabInKnn.pdf",width=4,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+### save the predictions for making  plots
+```{r, eval=F}
+pbmc_undefined_transf$predicted.id_annoy = apply_score_filter(
+  pbmc_undefined_transf,
+  assay = "predictions",
+  slot = "data",
+  score.filter = 1.0
+)
+```
+
+```{r, eval=F}
+# run this multiple times with different score filter cutoffs
+pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn = pbmc_undefined_transf
+```
+
+```{r}
+table(pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn$predicted.id_annoy)
+table(pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn$predicted.id_annoy)
+table(pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn$predicted.id_annoy)
+table(pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn$predicted.id_annoy)
+table(pbmc_undefined_transf_allTerms_ds_sf09_simpleTier_intLabInKnn$predicted.id_annoy)
+table(pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn$predicted.id_annoy)
+```
+
+## combine the three bars dataset
+```{r}
+sum_num_00 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn$predicted.id_annoy))
+sum_num_03 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn$predicted.id_annoy))
+sum_num_04 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn$predicted.id_annoy))
+sum_num_05 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn$predicted.id_annoy))
+sum_num_09 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf09_simpleTier_intLabInKnn$predicted.id_annoy))
+sum_num_10 = as.data.frame(table(pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn$predicted.id_annoy))
+
+# Perform full join on sum_nums
+combined_df <- full_join(sum_num_00, sum_num_03, by = "Var1", suffix = c("_num00", "_num03"))
+combined_df <- full_join(combined_df, sum_num_04, by = "Var1", suffix = c("", "_num04"))
+combined_df <- full_join(combined_df, sum_num_05, by = "Var1", suffix = c("", "_num05"))
+combined_df <- full_join(combined_df, sum_num_09, by = "Var1", suffix = c("", "_num09"))
+combined_df <- full_join(combined_df, sum_num_10, by = "Var1", suffix = c("", "_num10"))
+
+# Rename the columns for consistency
+colnames(combined_df) <- c("Var1", "sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0")
+library(reshape2)
+combined_df = melt(combined_df)
+```
+
+```{r}
+filtered_df <- combined_df 
+
+upper_cutoff = 170000
+
+desired_order <- c("CD4-naive", "CD4-naive-CM-int", "CD4-CM","CD4-CM-EM-int", "CD4-EM","Th1", "Th2","Th17", "Th22","nTreg", "neTreg-int", "eTreg", "Tfr", "Tfh", "CD4-CTL", "Th1-Th17", "Th2-Th17", "Tfh-Th17", "Unassigned")  
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of predicted cells", title = "", fill = "core cells") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 6))) +
+  #scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_text(aes(label = label1), 
+            position = position_dodge(width = 0.9), vjust = 0.5, angle = 90, hjust = 1) 
+
+g1
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_predicted_numbers_bars_with_downsample_different_scoreFilters_simpleTier_intLabInKnn.pdf",width=6,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+Let's make two plots to better see the rare ones
+```{r}
+filtered_df <- combined_df %>%
+  filter((Var1 %in% c("Th1", "Th2","Th17", "Th22","nTreg", "neTreg-mix", "eTreg", "Tfr", "Tfh", "CD4-CTL", "Th1-Th17", "Th2-Th17", "Tfh-Th17")  ))
+
+upper_cutoff = 170000
+
+desired_order <- c("Th1", "Th2","Th17", "Th22","nTreg", "neTreg-mix", "eTreg", "Tfr", "Tfh", "CD4-CTL", "Th1-Th17", "Th2-Th17", "Tfh-Th17")   
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of predicted cells", title = "", fill = "core cells") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 6))) +
+  #scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black"))
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_predicted_numbers_bars_with_downsample_different_scoreFilters_plot1_simpleTier_intLabInKnn.pdf",width=6,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+
+```{r}
+filtered_df <- combined_df %>%
+  filter((Var1 %in% c("CD4-naive", "CD4-naive-CM-int", "CD4-CM","CD4-CM-EM-int", "CD4-EM","Unassigned") ))
+
+upper_cutoff = 170000
+
+desired_order <- c("CD4-naive", "CD4-naive-CM-int", "CD4-CM","CD4-CM-EM-int", "CD4-EM","Unassigned")   
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of predicted cells", title = "", fill = "core cells") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 6))) +
+  #scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_text(aes(label = label1), 
+            position = position_dodge(width = 0.9), vjust = 0.5, angle = 90, hjust = 1)   +
+  theme(axis.text.x = element_text(color="black"), axis.text.7 = element_text(color="black"))
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_predicted_numbers_bars_with_downsample_different_scoreFilters_plot2_simpleTier_intLabInKnn.pdf",width=3.5,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+
+## add in the number of core cells
+```{r}
+sum_num_core = as.data.frame(table(scCD4$final_labels))
+
+combined_df <- full_join(sum_num_00, sum_num_03, by = "Var1", suffix = c("_num00", "_num03"))
+combined_df <- full_join(combined_df, sum_num_04, by = "Var1", suffix = c("", "_num04"))
+combined_df <- full_join(combined_df, sum_num_05, by = "Var1", suffix = c("", "_num05"))
+combined_df <- full_join(combined_df, sum_num_09, by = "Var1", suffix = c("", "_num09"))
+combined_df <- full_join(combined_df, sum_num_10, by = "Var1", suffix = c("", "_num10"))
+combined_df <- full_join(combined_df, sum_num_core, by = "Var1", suffix = c("", "_numcore"))
+
+# Rename the columns for consistency
+colnames(combined_df) <- c("Var1", "sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0", "core")
+library(reshape2)
+combined_df = melt(combined_df)
+```
+
+
+```{r}
+#because Seurat is doing this:
+#Warning: Feature names cannot have underscores ('_'), replacing with dashes ('-')
+#we have to convert dashes back to underscores
+
+combined_df$Var1 <- gsub("-", "_", combined_df$Var1)
+combined_df$Var1 <- gsub("unknown", "Unassigned", combined_df$Var1)
+```
+
+```{r}
+filtered_df <- combined_df %>%
+  filter((Var1 %in% c("Th1", "Th2","Th17", "Th22","nTreg", "neTreg_int", "eTreg", "Tfr", "Tfh", "CD4_CTL", "Th1_Th17", "Th2_Th17", "Tfh_Th17")))
+
+upper_cutoff = 170000
+
+desired_order <- c("Th1", "Th2","Th17", "Th22","nTreg", "neTreg_int", "eTreg", "Tfr", "Tfh", "CD4_CTL", "Th1_Th17", "Th2_Th17", "Tfh_Th17")
+
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0", "core")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of predicted cells", title = "", fill = "core cells") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 7))) +
+  #scale_y_continuous(trans = "log10",labels = comma) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black"))
+
+g1
+
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_predicted_numbers_bars_with_downsample_different_scoreFilters_plot1_withCore_simpleTier_intLabInKnn.pdf",width=8.5,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+
+```{r}
+filtered_df <- combined_df %>%
+  filter((Var1 %in% c("CD4_naive", "CD4_naive_CM_int", "CD4_CM","CD4_CM_EM_int", "CD4_EM","Unassigned")))
+
+upper_cutoff = 170000
+
+desired_order <- c("CD4_naive", "CD4_naive_CM_int", "CD4_CM","CD4_CM_EM_int", "CD4_EM","Unassigned")
+
+filtered_df <- filtered_df %>%
+  mutate(capped_value = ifelse(is.na(value), 0, ifelse(value > upper_cutoff, upper_cutoff, value)),
+         Var1 = factor(Var1, levels = desired_order),
+         variable = factor(variable, levels = c("sf_0.0", "sf_0.3", "sf_0.4", "sf_0.5", "sf_0.9", "sf_1.0", "core")),
+         label1 = ifelse(value > upper_cutoff, as.character(value), ""),
+         label2 = ifelse(capped_value != 0, "", "NA"))
+
+g1 = ggplot(filtered_df, aes(x = Var1, y = capped_value, group = variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", aes(fill = variable)) +
+  labs(x = "", y = "# of predicted cells", title = "", fill = "core cells") +
+  scale_fill_manual(values = rev(moma.colors("Ohchi", 7))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_text(aes(label = label1), 
+            position = position_dodge(width = 0.9), vjust = 0.5, angle = 90, hjust = 1)   +
+  theme(axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black"))
+
+g1
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_predicted_numbers_bars_with_downsample_different_scoreFilters_plot2_withCore_simpleTier_intLabInKnn.pdf",width=5,height=3 ,paper='special') 
+g1
+dev.off()
+```
+
+### compare phenotype of original and predicted cells with different score filter cutoff
+```{r}
+# combine to one Seurat object
+gc()
+
+#Add identifiers for each Seurat object:
+scCD4$source <- "no_knn"
+pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn$source <- "sf00"
+pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn$source <- "sf03"
+pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn$source <- "sf04"
+pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn$source <- "sf05"
+pbmc_undefined_transf_allTerms_ds_sf09_simpleTier_intLabInKnn$source <- "sf09"
+pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn$source <- "sf10"
+
+
+#Create the new column with label information:
+scCD4$vp_label <- scCD4$final_labels
+pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn$predicted.id_annoy
+pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn$predicted.id_annoy
+pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn$predicted.id_annoy
+pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn$predicted.id_annoy
+pbmc_undefined_transf_allTerms_ds_sf09_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf09_simpleTier_intLabInKnn$predicted.id_annoy
+pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn$vp_label <- pbmc_undefined_transf_allTerms_ds_sf10_simpleTier_intLabInKnn$predicted.id_annoy
+
+
+#Merge the Seurat objects:
+combined_seurat <- merge(
+  x = scCD4,
+  y = list(pbmc_undefined_transf_allTerms_ds_sf00_simpleTier_intLabInKnn,
+           pbmc_undefined_transf_allTerms_ds_sf03_simpleTier_intLabInKnn,
+           pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn,
+           pbmc_undefined_transf_allTerms_ds_sf05_simpleTier_intLabInKnn),
+  add.cell.ids = c("no_knn", "sf00", "sf03", "sf04", "sf05"),
+  project = "CombinedProject"
+)
+
+gc()
+```
+
+```{r}
+remove_cell_types <- c("CD4_CTL", "unknown", "Tfr", "Th22",  "Th2", "Th17", "Th17_Th11", "Th1_Th2", "Th17_Th2", "CD4_naive", "CD4_CM_CD4_naive","CD4_CM", "CD4_CM_CD4_EM","CD4_EM", "nTreg", "eTreg_nTreg", "Unassigned", "CD4-CM", "CD4-CTL", "CD4-EM", "CD4-naive", "Tfh")
+combined_seurat_filtered <- subset(combined_seurat, vp_label %in% c("eTreg", "Th1"), invert = F)
+
+# Define the desired order of cell types
+cell_type_order <- c("eTreg", "Th1")
+
+# Set the factor levels for the identity classes
+combined_seurat_filtered$vp_label <- factor(combined_seurat_filtered$vp_label, levels = cell_type_order)
+
+# Define the desired order of algorithm
+algo_order <- c("sf00", "sf03", "sf04", "sf05", "no_knn")
+
+# Set the factor levels for the identity classes
+combined_seurat_filtered$source <- factor(combined_seurat_filtered$source, levels = algo_order)
+```
+
+
+```{r, fig.width=20, fig.height=8}
+goi_genes = c("FOXP3","CTLA4", "IL2RA", "IKZF2", "TBX21", "IFNG", "CXCR3", "STAT4")
+
+vp =  VlnPlot(combined_seurat_filtered, features = goi_genes, group.by = "vp_label", pt.size = .00001, alpha = 0.1, split.by = "source", cols = rev(moma.colors("Ohchi", 7))[c(1:4,7)], raster = TRUE, ncol = 4)
+vp
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_Haniffa_CD4_annoy_compare_rare_markers_violin.pdf",width=12,height=5 ,paper='special') 
+vp
+dev.off()
+```
+
+# Combining everything to one Seurat object
+```{r}
+# below contains the original cell types in final_labels
+pbmc_CD4_core = scCD4[, !scCD4$final_labels %in% c("unknown")]
+```
+
+```{r, eval=F}
+#select score filter cutoff
+pbmc_undefined_transf_allTerms_ds = pbmc_undefined_transf_allTerms_ds_sf04_simpleTier_intLabInKnn
+```
+
+```{r}
+# this is the knn results after downsample
+pbmc_undefined_transf_allTerms_ds$final_labels = pbmc_undefined_transf_allTerms_ds$predicted.id_annoy
+
+# combine these and check that it matches with the kength of the original
+(dim(pbmc_CD4_core)[2] +
+dim(pbmc_undefined_transf_allTerms_ds)[2])
+
+dim(scCD4)[2]
+
+(dim(pbmc_CD4_core)[2] + dim(pbmc_undefined_transf_allTerms_ds)[2]) == dim(scCD4)[2]
+```
+
+```{r}
+#Merge the Seurat objects:
+combined_seurat <- merge(
+  x = pbmc_CD4_core,
+  y = list(pbmc_undefined_transf_allTerms_ds),
+  add.cell.ids = c("core", "knn"),
+  project = "CombinedProject"
+)
+
+dim(combined_seurat)
+dim(scCD4)
+```
+
+## make column with core or knn
+```{r}
+combined_seurat$source <- ifelse(is.na(combined_seurat$predicted.id_annoy), "core", "knn")
+```
+
+```{r}
+#because Seurat is doing this:
+#Warning: Feature names cannot have underscores ('_'), replacing with dashes ('-')
+#we have to convert dashes back to underscores
+
+# Load necessary libraries
+library(stringr)
+
+# Create a vector of new labels
+new_labels <- combined_seurat$final_labels
+
+# Create a vector of original labels
+original_labels <- scCD4$final_labels
+
+# Function to replace dashes with underscores if corresponding original label exists
+replace_dashes <- function(new_label, original_labels) {
+  # Check if new label contains dashes
+  if (str_detect(new_label, "-")) {
+    # Replace dashes with underscores
+    potential_label <- str_replace_all(new_label, "-", "_")
+    # Check if the potential label exists in the original labels
+    if (potential_label %in% original_labels) {
+      return(potential_label)
+    }
+  }
+  return(new_label)
+}
+
+# Apply the function to each new label
+revised_labels <- sapply(new_labels, replace_dashes, original_labels = original_labels)
+
+# Update the new labels with the revised ones
+combined_seurat$final_labels_corrected <- revised_labels
+
+```
+
+## after change:
+```{r}
+table(combined_seurat$final_labels_corrected)
+```
+## before change:
+```{r}
+table(combined_seurat$final_labels)
+```
+
+```{r, eval=F}
+# export seurat object
+saveRDS(combined_seurat,"~/Desktop/241003_Haniffa_CD4_combined_seuratObject_underscoreFix.rds")
+```
+
+## 240925 - combined UMAP of CD4 with all labels
+```{r}
+table(combined_seurat$final_labels)
+```
+```{r}
+combined_seurat <- FindVariableFeatures(combined_seurat, selection.method = "vst", nfeatures = 2000, verbose = T,assay = "RNA")
+combined_seurat <- ScaleData(combined_seurat, assay = "RNA")
+combined_seurat <- RunPCA(combined_seurat, npcs = 50, assay = "RNA",verbose = T)
+```
+
+```{r}
+#batch correction
+combined_seurat <- RunHarmony(combined_seurat, "Site")
+```
+
+```{r}
+combined_seurat <- RunUMAP(combined_seurat, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+dp = DimPlot(combined_seurat, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels_corrected')    + ggtitle(NULL)
+dp
+```
+
+```{r}
+pdf("~/Desktop/241010_pdfs/241010_Haniffa_CD4_final_combined_umap.pdf",width=7.5,height=5 ,paper='special') 
+dp
+dev.off()
+```
+
+```{r}
+pdf("~/Desktop/241010_pdfs/241010_Haniffa_CD4_final_combined_umap_big_text.pdf",width=6.5,height=4 ,paper='special') 
+dp
+dev.off()
+```
+
+## also plot just the single labels for Fig 1
+```{r}
+combined_seurat_sub <- combined_seurat[, !combined_seurat$single_labels %in% c("unknown")]
+```
+
+```{r}
+dp = DimPlot(combined_seurat_sub, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'single_labels', raster = TRUE)    + ggtitle(NULL)
+dp
+```
+
+```{r}
+pdf("~/Desktop/241010_pdfs/241010_Haniffa_CD4_core_single_labels_umap_big_text.pdf",width=5,height=3 ,paper='special') 
+dp
+dev.off()
+```
+
+
+```{r}
+combined_seurat_sub <- FindVariableFeatures(combined_seurat_sub, selection.method = "vst", nfeatures = 2000, verbose = T,assay = "RNA")
+combined_seurat_sub <- ScaleData(combined_seurat_sub, assay = "RNA")
+combined_seurat_sub <- RunPCA(combined_seurat_sub, npcs = 50, assay = "RNA",verbose = T)
+```
+
+
+```{r}
+#batch correction
+combined_seurat_sub <- RunHarmony(combined_seurat_sub, "Site")
+```
+
+```{r}
+combined_seurat_sub <- RunUMAP(combined_seurat_sub, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+dp = DimPlot(combined_seurat_sub, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels_corrected')    + ggtitle(NULL)
+dp
+```
+
+## and final umap without unassigned for Fig 1
+```{r}
+combined_seurat_sub2 <- combined_seurat[, !combined_seurat$final_labels_corrected %in% c("Unassigned")]
+```
+
+```{r}
+dp = DimPlot(combined_seurat_sub2, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels_corrected')    + ggtitle(NULL)
+dp
+```
+
+```{r}
+combined_seurat_sub2 <- FindVariableFeatures(combined_seurat_sub2, selection.method = "vst", nfeatures = 2000, verbose = T,assay = "RNA")
+combined_seurat_sub2 <- ScaleData(combined_seurat_sub2, assay = "RNA")
+combined_seurat_sub2 <- RunPCA(combined_seurat_sub2, npcs = 50, assay = "RNA",verbose = T)
+```
+
+```{r}
+#batch correction
+combined_seurat_sub2 <- RunHarmony(combined_seurat_sub2, "Site")
+```
+
+```{r}
+combined_seurat_sub2 <- RunUMAP(combined_seurat_sub2, dims = 1:10, reduction = "harmony")
+```
+
+```{r}
+dp = DimPlot(combined_seurat_sub2, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'final_labels_corrected')    + ggtitle(NULL)
+dp
+```
+
+```{r}
+pdf("~/Desktop/241010_pdfs/241010_Haniffa_CD4_final_combined_umap_without_unassigned_big_text.pdf",width=6.5,height=4 ,paper='special') 
+dp
+dev.off()
+```
+
+
+# Seurat_pbmc data
+```{r}
+library(SeuratDisk)
+seurat_pbmc <- LoadH5Seurat("~/Desktop/seurat_pbmc/multi.h5seurat")
+```
+
+```{r, fig.width=15, fig.height=8}
+plot_grid(ncol = 2, 
+          DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'celltype.l1'),
+          DimPlot(seurat_pbmc, reduction = "umap", label = T, repel = TRUE, group.by = 'celltype.l2'),
+          DimPlot(seurat_pbmc, reduction = "umap", label = F, repel = TRUE, group.by = 'celltype.l3')
+)
+```
+
+```{r}
+#scale the SCT data
+all.genes <- rownames(seurat_pbmc)
+seurat_pbmc <- ScaleData(seurat_pbmc, assay = 'SCT', features = all.genes)
+```
+
+
+
+#RNA is not found in this object => change to SCT
+#Also no scaled data (added above)
+If not scaling all, I can get subset out of bound error in:
+seurat_pbmc_sub <- seurat_pbmc_ds[gene_priority_table_1$gene_id[4], ]
+Error in seurat_pbmc_ds[gene_priority_table_1$gene_id[4], ] : 
+  subscript out of bounds
+
+# seurat_pbmc, scODIN, top level (using l2)
+# 240712 - scODIN code tier system
+```{r}
+gc()
+
+start_time <- Sys.time()
+start_time
+
+message("Preparing gene priority table")
+
+# Load the gene_priority table
+gene_priority_table <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx")
+
+# Subset to subset level
+gene_priority_table <- gene_priority_table[gene_priority_table$cell_level == "Top", ]
+
+# Check if there are any missing genes and print a message if there are
+missing_genes <- gene_priority_table$gene_id[!gene_priority_table$gene_id %in% rownames(seurat_pbmc)]
+if (length(missing_genes) > 0) {
+  message("The following priority genes are not found in the scRNAseq dataset: ", paste(missing_genes, collapse = ", "), ". Please check if your genes are labelled correctly.")
+} else {
+  message("All priority genes are found in the scRNAseq dataset (~˘▾˘)~.")
+}
+
+message("Preparing gene expression table")
+
+# Select genes in the gene_priority_table found in the data
+gene_priority_table <- gene_priority_table[gene_priority_table$gene_id %in% rownames(seurat_pbmc), ]
+
+# Downsample Seurat object to same genes
+seurat_pbmc_ds <- seurat_pbmc[gene_priority_table$gene_id, ]
+
+# Select just the data that we need
+seurat_pbmc_ds <- seurat_pbmc_ds[["SCT"]]$scale.data
+
+# Extract cell types from the priority table
+unique_cell_types <- unique(gene_priority_table$cell_type)
+
+# Generate an empty matrix, same length as the data
+scODIN_score_all <- matrix(nrow = 0, ncol = dim(seurat_pbmc)[2])
+colnames(scODIN_score_all) <- colnames(seurat_pbmc)
+
+message("Initiating scODIN scoring")
+
+# Start of loop
+for (j in unique_cell_types) {
+  # Select only genes present per cell type
+  gene_priority_table_1 <- subset(gene_priority_table, cell_type == j)
+
+  # Check for duplicates in gene_priority_table
+  if (anyDuplicated(gene_priority_table_1$gene_id) > 0) {
+    stop(" There are duplicates in gene_priority_table for cell type ", j, ". Please correct your gene_priority table and try again.")
+  } else {
+    message(" Now processing ", j)
+  }
+  
+  # Downsample Seurat object to same genes
+  seurat_pbmc_sub <- seurat_pbmc_ds[gene_priority_table_1$gene_id, ]
+
+  if (dim(gene_priority_table_1)[1] > 1) {
+    # Sort the two data objects
+    seurat_pbmc_sub <- seurat_pbmc_sub[order(rownames(seurat_pbmc_sub)), ]
+    gene_priority_table_1 <- gene_priority_table_1[order(gene_priority_table_1$gene_id), ]
+  }
+
+  # Make a new matrix to store the result
+  scODIN_score_matrix <- matrix(nrow = length(gene_priority_table_1$gene_id), ncol = dim(seurat_pbmc)[2])
+
+  # Multiply expression values with gene_priority and divide by the square-root of the number of genes per cell type
+  if (length(gene_priority_table_1$gene_id) > 1) {
+    for (i in 1:length(gene_priority_table_1$gene_id)) {
+      scODIN_score_matrix[i, ] <- seurat_pbmc_sub[i, ] * gene_priority_table_1$gene_priority[i] / sqrt(length(gene_priority_table_1$gene_id))
+    }
+  } else {
+    scODIN_score_matrix[1, ] <- seurat_pbmc_sub * gene_priority_table_1$gene_priority / sqrt(1)
+  }
+
+  # Convert the matrix to a data frame and add to combined dataframe
+  scODIN_score_all <- rbind(scODIN_score_all, colSums(scODIN_score_matrix, na.rm = TRUE))
+  
+}
+
+# Label the rownames according to the cell types
+rownames(scODIN_score_all) <- unique_cell_types
+
+message("Applying core cell type cutoff")
+
+# Make a cutoff for what is a core cell type
+cutoff <- 1
+
+# Apply cutoff to all values in the dataframe
+scODIN_score_all <- ifelse(scODIN_score_all < cutoff, 0, scODIN_score_all)
+
+# Transpose the df for easier handling of cell-wise operations
+scODIN_score_all <- t(scODIN_score_all)
+
+message("Processing accepted double labels")
+
+# Initialize columns for single labels, double labels, and unknowns
+single_labels <- rep("unknown", nrow(scODIN_score_all))
+double_labels <- rep("not_double_label", nrow(scODIN_score_all))
+
+# Define a threshold for similarity scores
+similarity_threshold <- 2
+
+# Create a list of cell types for each tier
+tier_list <- split(gene_priority_table$cell_type, gene_priority_table$tier)
+
+# Function to assign labels based on tier
+assign_labels <- function(scores, tier_cell_types, similarity_threshold) {
+  cell_types <- names(which(scores > 0 & names(scores) %in% tier_cell_types))
+  num_labels <- length(cell_types)
+  
+  if (num_labels == 1) {
+    return(list(single = cell_types[1], double = "not_double_label"))
+  } else if (num_labels == 2) {
+    top_two_scores <- sort(scores[scores > 0], decreasing = TRUE)
+    if ((top_two_scores[1] - top_two_scores[2]) < similarity_threshold) {
+      return(list(single = "unknown", double = paste(cell_types, collapse = "_")))
+    } else {
+      return(list(single = names(which.max(scores)), double = "not_double_label"))
+    }
+  }
+  return(list(single = "unknown", double = "not_double_label"))
+}
+
+# Determine single labels, double labels, and unknowns using a tier-based system
+# Iterate over each tier
+# Initialize a vector to track labeled cells
+labeled_cells <- rep(FALSE, nrow(scODIN_score_all))
+
+for (tier in sort(unique(gene_priority_table$tier))) {
+  tier_cell_types <- tier_list[[as.character(tier)]]
+  
+  for (i in 1:nrow(scODIN_score_all)) {
+    if (!labeled_cells[i]) {
+      scores <- scODIN_score_all[i, ]
+      labels <- assign_labels(scores, tier_cell_types, similarity_threshold)
+      if (labels$single != "unknown") {
+        single_labels[i] <- labels$single
+        labeled_cells[i] <- TRUE
+      } else if (labels$double != "not_double_label") {
+        double_labels[i] <- labels$double
+        labeled_cells[i] <- TRUE
+      }
+    }
+  }
+}
+
+# Load the accepted double labels from the Excel sheet
+accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a new column for combined labels
+combined_labels <- single_labels
+
+# Check each double label and see if it is in the accepted list
+for (i in 1:nrow(scODIN_score_all)) {
+  if (double_labels[i] != "not_double_label") {
+    if (double_labels[i] %in% accepted_combinations) {
+      combined_labels[i] <- double_labels[i]
+    }
+  }
+}
+
+message("Adding scODIN information to Seurat object")
+
+# Add the scODIN.scores and new metadata to the Seurat object
+for (i in 1:length(unique_cell_types)) {
+  seurat_pbmc <- AddMetaData(seurat_pbmc, scODIN_score_all[, i], col.name = unique_cell_types[i])
+}
+
+seurat_pbmc <- AddMetaData(seurat_pbmc, single_labels, col.name = "single_labels")
+seurat_pbmc <- AddMetaData(seurat_pbmc, double_labels, col.name = "double_labels")
+seurat_pbmc <- AddMetaData(seurat_pbmc, combined_labels, col.name = "final_labels")
+
+end_time <- Sys.time()
+message("scODIN calculation has finished in ", format(end_time - start_time))
+
+```
+
+```{r}
+table(seurat_pbmc$final_labels)
+```
+
+```{r}
+# this can be used if we have any problems with overlap between cell types that should not overlap
+sort(table(seurat_pbmc$double_labels), decreasing = T)
+```
+
+```{r}
+#numbers from author paper
+table(seurat_pbmc$celltype.l2)
+```
+
+
+
+## simplify final double labels
+```{r}
+# Load the accepted double labels from the Excel sheet
+#accepted_doubles <- read_excel("~/Desktop/241017_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
+
+# Subset to subset level
+accepted_doubles <- accepted_doubles[accepted_doubles$cell_level == "CD4_T", ]
+
+# Create a combined column in the accepted_doubles DataFrame
+accepted_doubles$combined <- paste(accepted_doubles$cell_type1, accepted_doubles$cell_type2, sep = "_")
+accepted_doubles$combined_rev <- paste(accepted_doubles$cell_type2, accepted_doubles$cell_type1, sep = "_")
+accepted_combinations <- c(accepted_doubles$combined, accepted_doubles$combined_rev)
+
+# Create a named vector for label replacements
+replacement_vector <- data.frame(accepted_combinations, accepted_doubles$simple_name)
+replacement_vector <- setNames(rep(accepted_doubles$simple_name,2), accepted_combinations)
+
+
+# Replace labels in seurat_pbmc$final_labels
+seurat_pbmc$final_labels <- ifelse(seurat_pbmc$final_labels %in% names(replacement_vector),
+                             replacement_vector[seurat_pbmc$final_labels],
+                             seurat_pbmc$final_labels)
+```
+
+
+```{r}
+table(seurat_pbmc$final_labels)
+```
+
+
+## combining cell number and scODIN_score per cluster for a cluster-labeling
+```{r}
+seurat_pbmc <- odin_cluster_scoring(seurat_pbmc, "celltype.l2")
+```
+
+```{r}
+DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'scODIN_classification')        
+```
+
+
+## compare overlap of labels, clustering level
+```{r}
+# Define the mapping of equivalent labels
+equivalent_labels <- list(
+  "B intermediate" = "B cell",
+  "B memory" = "B cell",
+  "B naive" = "B cell",
+  "CD14 Mono" = "Monocyte",
+  "CD16 Mono" = "Monocyte",
+  "CD4 CTL" = "CD4_T",
+  "CD4 Naive" = "CD4_T",
+  "CD4 Proliferating" = "Proliferating",
+  "CD4 TCM" = "CD4_T",
+  "CD4 TEM" = "CD4_T",
+  "Treg" = "CD4_T",
+  "CD8 Naive" = "CD8_T",
+  "CD8 Proliferating" = "Proliferating",
+  "CD8 TCM" = "CD8_T",
+  "CD8 TEM" = "CD8_T",
+  "cDC1" = "mDC",
+  "cDC2" = "mDC",
+  "Eryth" = "Erythrocyte",
+  "HSPC" = "HSC",
+  "NK Proliferating" = "Proliferating",
+  "NK_CD56bright" = "NK"
+)
+
+# Function to map equivalent labels
+map_labels <- function(labels, mapping) {
+  labels <- as.character(labels) 
+  for (orig_label in names(mapping)) {
+    labels[labels == orig_label] <- mapping[[orig_label]]
+  }
+  return(as.factor(labels)) 
+}
+
+# Map labels in original_idents and scODIN_results
+original_idents_mapped <- map_labels(seurat_pbmc$celltype.l2, equivalent_labels)
+scODIN_results_mapped <- map_labels(seurat_pbmc$scODIN_classification, equivalent_labels)
+
+# Convert factors to characters for comparison
+original_idents_mapped_char <- as.character(original_idents_mapped)
+scODIN_results_mapped_char <- as.character(scODIN_results_mapped)
+
+# Replace NA values in scODIN_results_mapped_char with "unknown"
+scODIN_results_mapped_char <- ifelse(is.na(scODIN_results_mapped_char), "unknown", scODIN_results_mapped_char)
+
+# Calculate overall correctly assigned percentage
+total_cells <- length(original_idents_mapped_char)
+correct_assignments <- sum(original_idents_mapped_char == scODIN_results_mapped_char)
+correctly_assigned_percentage <- (correct_assignments / total_cells) * 100
+
+cat("Total number of cells:", total_cells, "\n")
+cat("Number of correctly assigned cells:", correct_assignments, "\n")
+cat("Correctly assigned percentage:", correctly_assigned_percentage, "%\n")
+```
+
+```{r, fig.width=16, fig.height=8}
+plot_grid(ncol = 2, 
+          DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'scODIN_classification'),
+          DimPlot(seurat_pbmc, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'celltype.l2')
+          )
+```
+
+## Fig. 6
+```{r}
+library(rstatix)
+library(ggpubr)
+```
+
+# Haniffa correlation with severity. 
+## original labels correlation
+```{r}
+plot_list = list()
+#pre-processing
+table1 = table(combined_seurat$patient_id, combined_seurat$full_clustering)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat$severity = as.character(combined_seurat$Status_on_day_collection_summary)
+combined_seurat$patient_id = as.character(combined_seurat$patient_id)
+table2 = cbind(combined_seurat$patient_id, combined_seurat$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","1",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","2",table3$V2)
+table3$V2 = gsub("Moderate","3",table3$V2)
+table3$V2 = gsub("Severe","4",table3$V2)
+table3$V2 = gsub("Critical","5",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+levels(table3$V2)
+table3$V2 = as.numeric(as.character(table3$V2))
+table3 = subset(table3, table3$V2 %in% c(1,2,3,4,5))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+table4$V2 = as.numeric(table4$V2)
+
+#correlation test
+cor_test = cor.test(table4$V2, table4$Freq, method = "spearman")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+
+
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = Var2, fill = Var2)) +  
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      geom_smooth(method = "auto", se = TRUE, fullrange = FALSE, level = 0.95, color = smooth_color, fill = smooth_color) + 
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = "white") +
+      scale_color_manual(values = "black") +
+      labs(y = "% of CD4 T", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      annotate("text", x = Inf, y = Inf, label = sprintf("rho = %.2f\np = %.2g", rho, p_value), hjust = 1.1, vjust = 1.1, size = 5, color = "black") +
+      scale_x_continuous(breaks=seq(1,5,1),labels=c("Healthy", "Mild", "Moderate", "Severe", "Critical")) 
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/240925_Haniffa_original_", soi, "_correlation.pdf"),width=5,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## original labels violin
+```{r}
+#pre-processing
+table1 = table(combined_seurat$patient_id, combined_seurat$full_clustering)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat$severity = as.character(combined_seurat$Status_on_day_collection_summary)
+combined_seurat$patient_id = as.character(combined_seurat$patient_id)
+table2 = cbind(combined_seurat$patient_id, combined_seurat$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241007_Haniffa_original_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## scODIN final labels (i.e. combined core and knn) correlation
+```{r}
+plot_list = list()
+#pre-processing
+table1 = table(combined_seurat$patient_id, combined_seurat$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat$severity = as.character(combined_seurat$Status_on_day_collection_summary)
+combined_seurat$patient_id = as.character(combined_seurat$patient_id)
+table2 = cbind(combined_seurat$patient_id, combined_seurat$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","1",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","2",table3$V2)
+table3$V2 = gsub("Moderate","3",table3$V2)
+table3$V2 = gsub("Severe","4",table3$V2)
+table3$V2 = gsub("Critical","5",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+levels(table3$V2)
+table3$V2 = as.numeric(as.character(table3$V2))
+table3 = subset(table3, table3$V2 %in% c(1,2,3,4,5))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+table4$V2 = as.numeric(table4$V2)
+
+#correlation test
+cor_test = cor.test(table4$V2, table4$Freq, method = "spearman")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+
+
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = Var2, fill = Var2)) +  
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      geom_smooth(method = "auto", se = TRUE, fullrange = FALSE, level = 0.95, color = smooth_color, fill = smooth_color) + 
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = "white") +
+      scale_color_manual(values = "black") +
+      labs(y = "% of CD4 T", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      annotate("text", x = Inf, y = Inf, label = sprintf("rho = %.2f\np = %.2g", rho, p_value), hjust = 1.1, vjust = 1.1, size = 5, color = "black") +
+      scale_x_continuous(breaks=seq(1,5,1),labels=c("Healthy", "Mild", "Moderate", "Severe", "Critical")) 
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_final_labels_", soi, "_correlation.pdf"),width=5,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## scODIN core labels correlation
+```{r}
+combined_seurat_core = subset(combined_seurat, source == "core")
+plot_list = list()
+
+#pre-processing
+table1 = table(combined_seurat_core$patient_id, combined_seurat_core$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_core$severity = as.character(combined_seurat_core$Status_on_day_collection_summary)
+combined_seurat_core$patient_id = as.character(combined_seurat_core$patient_id)
+table2 = cbind(combined_seurat_core$patient_id, combined_seurat_core$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","1",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","2",table3$V2)
+table3$V2 = gsub("Moderate","3",table3$V2)
+table3$V2 = gsub("Severe","4",table3$V2)
+table3$V2 = gsub("Critical","5",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+levels(table3$V2)
+table3$V2 = as.numeric(as.character(table3$V2))
+table3 = subset(table3, table3$V2 %in% c(1,2,3,4,5))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+table4$V2 = as.numeric(table4$V2)
+
+#correlation test
+cor_test = cor.test(table4$V2, table4$Freq, method = "spearman")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+
+
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = Var2, fill = Var2)) +  
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      geom_smooth(method = "auto", se = TRUE, fullrange = FALSE, level = 0.95, color = smooth_color, fill = smooth_color) + 
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = "white") +
+      scale_color_manual(values = "black") +
+      labs(y = "% of CD4 T (with core label)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      annotate("text", x = Inf, y = Inf, label = sprintf("rho = %.2f\np = %.2g", rho, p_value), hjust = 1.1, vjust = 1.1, size = 5, color = "black") +
+      scale_x_continuous(breaks=seq(1,5,1),labels=c("Healthy", "Mild", "Moderate", "Severe", "Critical")) 
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_core_labels_", soi, "_correlation.pdf"),width=5,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+
+## scODIN knn labels correlation
+```{r}
+combined_seurat_knn = subset(combined_seurat, source == "knn")
+plot_list = list()
+
+#pre-processing
+table1 = table(combined_seurat_knn$patient_id, combined_seurat_knn$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_knn$severity = as.character(combined_seurat_knn$Status_on_day_collection_summary)
+combined_seurat_knn$patient_id = as.character(combined_seurat_knn$patient_id)
+table2 = cbind(combined_seurat_knn$patient_id, combined_seurat_knn$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","1",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","2",table3$V2)
+table3$V2 = gsub("Moderate","3",table3$V2)
+table3$V2 = gsub("Severe","4",table3$V2)
+table3$V2 = gsub("Critical","5",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+levels(table3$V2)
+table3$V2 = as.numeric(as.character(table3$V2))
+table3 = subset(table3, table3$V2 %in% c(1,2,3,4,5))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+table4$V2 = as.numeric(table4$V2)
+
+#correlation test
+cor_test = cor.test(table4$V2, table4$Freq, method = "spearman")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+
+
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = Var2, fill = Var2)) +  
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      geom_smooth(method = "auto", se = TRUE, fullrange = FALSE, level = 0.95, color = smooth_color, fill = smooth_color) + 
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = "white") +
+      scale_color_manual(values = "black") +
+      labs(y = "% of CD4 T (used for knn)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      annotate("text", x = Inf, y = Inf, label = sprintf("rho = %.2f\np = %.2g", rho, p_value), hjust = 1.1, vjust = 1.1, size = 5, color = "black") +
+      scale_x_continuous(breaks=seq(1,5,1),labels=c("Healthy", "Mild", "Moderate", "Severe", "Critical")) 
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_knn_labels_", soi, "_correlation.pdf"),width=5,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+
+## scODIN final labels (i.e. combined core and knn) violin
+```{r}
+#pre-processing
+#combined_seurat$final_labels = droplevels(combined_seurat$final_labels)
+table1 = table(combined_seurat$patient_id, combined_seurat$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat$severity = as.character(combined_seurat$Status_on_day_collection_summary)
+combined_seurat$patient_id = as.character(combined_seurat$patient_id)
+table2 = cbind(combined_seurat$patient_id, combined_seurat$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_final_labels_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## scODIN final labels (i.e. combined core and knn) combined Treg labels violin
+```{r}
+#pre-processing
+#scCD4$final_labels = droplevels(scCD4$final_labels)
+newnames = combined_seurat$final_labels_corrected
+combined_labels <- c("eTreg", "eTreg_Th17", "eTreg_Th2", "nTreg", "Tfr", "neTreg_int")
+newnames = ifelse(newnames %in% combined_labels, "all_Treg", newnames)
+
+table1 = table(combined_seurat$patient_id, newnames)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat$severity = as.character(combined_seurat$Status_on_day_collection_summary)
+combined_seurat$patient_id = as.character(combined_seurat$patient_id)
+table2 = cbind(combined_seurat$patient_id, combined_seurat$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = "all_Treg"
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$newnames %in% soi)
+table4 = na.omit(table4)
+#table4$V2 = as.numeric(table4$V2)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+i = 1
+soi = "all_Treg"
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_final_labels_merged_label_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+```
+
+## scODIN core labels violin
+```{r}
+#pre-processing
+table1 = table(combined_seurat_core$patient_id, combined_seurat_core$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_core$severity = as.character(combined_seurat_core$Status_on_day_collection_summary)
+combined_seurat_core$patient_id = as.character(combined_seurat_core$patient_id)
+table2 = cbind(combined_seurat_core$patient_id, combined_seurat_core$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T (with core label)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_core_labels_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## scODIN core labels combined Treg labels violin
+```{r}
+#pre-processing
+newnames = combined_seurat_core$final_labels_corrected
+combined_labels <- c("eTreg", "eTreg_Th17", "eTreg_Th2", "nTreg", "Tfr", "neTreg_int")
+newnames = ifelse(newnames %in% combined_labels, "all_Treg", newnames)
+
+table1 = table(combined_seurat_core$patient_id, newnames)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_core$severity = as.character(combined_seurat_core$Status_on_day_collection_summary)
+combined_seurat_core$patient_id = as.character(combined_seurat_core$patient_id)
+table2 = cbind(combined_seurat_core$patient_id, combined_seurat_core$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = "all_Treg"
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$newnames %in% soi)
+table4 = na.omit(table4)
+#table4$V2 = as.numeric(table4$V2)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T (with core label)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+i = 1
+soi = "all_Treg"
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_core_labels_merged_label_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+```
+
+## scODIN knn labels violin
+```{r}
+#pre-processing
+table1 = table(combined_seurat_knn$patient_id, combined_seurat_knn$final_labels_corrected)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_knn$severity = as.character(combined_seurat_knn$Status_on_day_collection_summary)
+combined_seurat_knn$patient_id = as.character(combined_seurat_knn$patient_id)
+table2 = cbind(combined_seurat_knn$patient_id, combined_seurat_knn$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = unique(table3$Var2)
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$Var2 %in% soi)
+table4 = na.omit(table4)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T (used for knn)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+for (i in c(1:length(soi_list))) {
+  soi = soi_list[i]
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_knn_labels_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+}
+```
+
+## scODIN knn labels combined Treg labels violin
+```{r}
+#pre-processing
+newnames = combined_seurat_knn$final_labels_corrected
+combined_labels <- c("eTreg", "eTreg_Th17", "eTreg_Th2", "nTreg", "Tfr", "neTreg_int")
+newnames = ifelse(newnames %in% combined_labels, "all_Treg", newnames)
+
+table1 = table(combined_seurat_knn$patient_id, newnames)
+
+# Calculate the percentages
+percentage_table <- prop.table(table1, margin = 1) * 100
+
+combined_seurat_knn$severity = as.character(combined_seurat_knn$Status_on_day_collection_summary)
+combined_seurat_knn$patient_id = as.character(combined_seurat_knn$patient_id)
+table2 = cbind(combined_seurat_knn$patient_id, combined_seurat_knn$severity) #here severity is chosen as the thing to correlate with
+rownames(table2) = table2[,1]
+
+table3 = merge(percentage_table, table2, by.x = 1, by.y = 0, all.x = TRUE )
+table3 = as.data.frame(table3)
+
+#change categorical variable to numerical (severity)
+table3$V2 = gsub("Non_covid","0",table3$V2)
+table3$V2 = gsub("Healthy","Healthy",table3$V2)
+table3$V2 = gsub("Asymptomatic","0",table3$V2)
+table3$V2 = gsub("Mild","COVID",table3$V2)
+table3$V2 = gsub("Moderate","COVID",table3$V2)
+table3$V2 = gsub("Severe","COVID",table3$V2)
+table3$V2 = gsub("Critical","COVID",table3$V2)
+table3$V2 = gsub("LPS_10hours","0",table3$V2)
+table3$V2 = gsub("LPS_90mins","0",table3$V2)
+table3$V2<-as.factor(table3$V2)
+table3 = subset(table3, table3$V2 %in% c("Healthy","COVID"))
+table3$V2 = droplevels(table3$V2)
+table3$V2 = factor(table3$V2, levels = c("Healthy","COVID"))
+
+smooth_color <- moma.colors("Ohchi", 9)[1]
+soi_list = "all_Treg"
+
+for (i in c(1: length(soi_list))) {
+  soi = soi_list[i]
+  nam = paste0("cp",i)
+  
+table4 = subset(table3, table3$newnames %in% soi)
+table4 = na.omit(table4)
+#table4$V2 = as.numeric(table4$V2)
+
+fill_colors <- moma.colors("Ohchi", 2)
+line_colors <- moma.colors("Ohchi", 2)
+
+gg1 <- ggplot(table4, aes(x = V2, y = Freq, color = V2, fill = V2)) + 
+      geom_violin(trim = FALSE, alpha = 0.7, size = 0.2, width = 1) +
+      geom_jitter(shape = 21, position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5),size = 1.2, stroke = 0.8) +
+      theme_classic() + 
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+      theme(axis.text=element_text(size=16), axis.title=element_text(size=16,face="bold")) +
+      ggtitle(soi) +
+      scale_fill_manual(values = fill_colors) +
+      scale_color_manual(values = c("black", "black")) +
+      labs(y = "% of CD4 T (used for knn)", x = "") +
+      theme(legend.position = "none", plot.title = element_text(hjust = 0.98), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      stat_compare_means(comparisons = list(c("Healthy", "COVID")), label = "p.format", method = "t.test", paired=F, tip.length = 0)
+
+assign(nam, gg1)
+}
+
+for(i in c(1:length(soi_list))) {
+  plot_list[i] = list(get(paste0("cp",i)))
+}
+
+i = 1
+soi = "all_Treg"
+pdf(paste0("~/Desktop/241017_pdfs/correlation/241017_Haniffa_scODIN_knn_labels_merged_label_", soi, "_violin.pdf"),width=2,height=4 ,paper='special') 
+print(plot_list[[i]], newpage = FALSE)
+dev.off()
+```
+
+## numbers of patients in each class
+```{r}
+df = table(combined_seurat$patient_id, combined_seurat$Status_on_day_collection_summary)
+df = as.data.frame(df)
+num_healthy <- sum(df$Var2 == "Healthy" & df$Freq > 0)
+num_healthy
+
+num_more_than_one <- sum(df$Var2 %in% c("Mild", "Moderate", "Severe", "Critical") & df$Freq > 1)
+num_more_than_one
+
+num_mild <- sum(df$Var2 == "Mild" & df$Freq > 1)
+num_moderate <- sum(df$Var2 == "Moderate" & df$Freq > 1)
+num_severe <- sum(df$Var2 == "Severe" & df$Freq > 1)
+num_critical <- sum(df$Var2 == "Critical" & df$Freq > 1)
+
+
+num_mild 
+num_moderate 
+num_severe 
+num_critical 
+
+```
+
+## 241002 - final results
+```{r, eval=F}
+# reload seurat object
+combined_seurat = readRDS("~/Desktop/240730_Haniffa_CD4_combined_seuratObject.rds")
+```
+
+```{r}
+#scale the Seurat data (after recombining the scaling is lost)
+all.genes <- rownames(combined_seurat)
+gc()
+Sys.time()
+combined_seurat <- ScaleData(combined_seurat, features = all.genes)
+Sys.time()
+```
+```{r}
+t13_genes = c("TBX21", "IFNG", "CXCR3", "STAT4", "PTGDR2", "IL4", "IL5", "IL13","RORC","IL17A", "IL17F", "PPARG", "IL23R", "KLRB1", "IL22", "FOXP3","CTLA4", "IL2RA", "CXCR5", "BCL6", "IL21", "TIGIT", "PDCD1", "GZMB", "PRF1", "CCR7", "FAS")
+```
+
+
+```{r, fig.width=16, fig.height=6}
+# Create a heatmap grouped by single labels
+DoHeatmap(combined_seurat, features = t13_genes, group.by = "final_labels_corrected", size = 3, angle = 45) + NoLegend() +   scale_fill_continuous(type = "viridis")
+```
+
+## 241003 - make dot plot instead
+median expression level is colour. Percentage expressing is size
+```{r}
+# Reorder the final_labels_corrected as needed
+#combined_seurat$final_labels_corrected <- factor(combined_seurat$final_labels_corrected, levels = c("Unassigned","CD4_EM","CD4_CM_CD4_EM","CD4_CM","CD4_CM_CD4_naive","CD4_naive","CD4_CTL","Tfh","Tfr","eTreg","eTreg_nTreg","nTreg","Th17_Th2","Th17_Th1","Th22","Th17","Th2","Th1"))
+
+combined_seurat$final_labels_corrected <- factor(combined_seurat$final_labels_corrected, levels = c("Unassigned","CD4_EM","CD4_CM_EM_int","CD4_CM","CD4_naive_CM_int","CD4_naive","CD4_CTL","Tfh","Tfr","eTreg","neTreg_int","nTreg","Tfh_Th1", "Tfh_Th17", "Th2_Th17","Th1_Th17","Th22","Th17","Th2","Th1"))
+
+
+dp = DotPlot(combined_seurat, features = t13_genes, group.by = "final_labels_corrected") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  geom_point(aes(fill = avg.exp.scaled, size = pct.exp), shape = 21, color = "black") +  # Black border with viridis colors
+  scale_fill_viridis_c(name = "Average Expression") +  # Use viridis scale for fill
+  guides(color = "none")  # Remove extra color scale
+dp
+```
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_combined_seurat_final_labels_corrected_dotplot_sf04_simpleTier_intLabInKnn.pdf",width=9,height=4.5 ,paper='special') 
+dp
+dev.off()
+```
+
+```{r}
+combined_seurat_core = subset(combined_seurat, source == "core") 
+
+combined_seurat_core$final_labels_corrected <- factor(combined_seurat_core$final_labels_corrected, levels = c("Unassigned","CD4_EM","CD4_CM_EM_int","CD4_CM","CD4_naive_CM_int","CD4_naive","CD4_CTL","Tfh","Tfr","eTreg","neTreg_int","nTreg","Tfh_Th1", "Tfh_Th17", "Th2_Th17","Th1_Th17","Th22","Th17","Th2","Th1"))
+
+# only core cells
+dp = DotPlot(combined_seurat_core, features = t13_genes, group.by = "final_labels_corrected") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  geom_point(aes(fill = avg.exp.scaled, size = pct.exp), shape = 21, color = "black") +  # Black border with viridis colors
+  scale_fill_viridis_c(name = "Average Expression") +  # Use viridis scale for fill
+  guides(color = "none")  # Remove extra color scale
+dp
+```
+
+```{r}
+pdf("~/Desktop/241017_pdfs/241017_pbmc_CD4_core_final_labels_dotplot.pdf",width=9,height=4.5 ,paper='special') 
+dp
+dev.off()
+```
