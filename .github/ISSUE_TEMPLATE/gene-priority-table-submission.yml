@@ -1,0 +1,23 @@
+name: Gene priority table submission
+description: Upload your gene priority table (.xlsx) and include a short description.
+title: "[Submission] Gene priority table"
+labels: [submission]
+body:
+  - type: input
+    id: submitter
+    attributes:
+      label: Submitter name or lab
+      placeholder: e.g. Smith Lab, University of Oxford
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Dataset description
+      description: Please describe the data and context (e.g. disease, tissue, species)
+      placeholder: Human liver biopsy, MASLD diagnosis
+
+  - type: markdown
+    attributes:
+      value: |
+        **Next step**:  
+        Drag and drop your Excel (.xlsx) file into this issue as an attachment.
