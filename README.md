@@ -297,11 +297,11 @@ table(merged_seurat$final_labels)
 
 ## Submit your own gene priority table to the community
 
-If you would like to contribute a gene priority table result, please submit it using the button below:
+If you would like to contribute a gene priority table, please use our submission form:
 
 [Submit a Table](https://github.com/jonasns/scodin/issues/new?template=gene-priority-table-submission.yml)
 
-You can attach your Excel (.xlsx) file directly to the issue and include a brief description.
+You can attach an Excel (.xlsx) file directly to the issue and include a brief description.
 
 
 
