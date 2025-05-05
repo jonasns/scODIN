@@ -300,20 +300,10 @@ table(merged_seurat$final_labels)
 If you would like to contribute a gene priority table, please submit it using one of the following options:
 
 ### 1. GitHub submission (recommended for users familiar with GitHub)
-
-Submit via GitHub Issue: 
 [Submit via Github](https://github.com/jonasns/scodin/issues/new?template=gene-priority-table-submission.yml)
 
-You can attach an Excel (.xlsx) file directly to the issue and include a brief description.
-
-
 ### 2. Google Form (for non-GitHub users)
-
-Submit via Google Form:  
-[Submit via Form](https://docs.google.com/forms/d/e/1FAIpQLSdzIxEG6eDaGHIuvjIFqdYfVwu7ITYvuWA0K6UQ1dy4kbSSzg/viewform?usp=sharing))
-
-The form allows you to upload your Excel file and enter a brief description.
-
+[Submit via Google Form](https://docs.google.com/forms/d/e/1FAIpQLSdzIxEG6eDaGHIuvjIFqdYfVwu7ITYvuWA0K6UQ1dy4kbSSzg/viewform?usp=sharing)
 
 
 
