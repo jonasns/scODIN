@@ -295,6 +295,12 @@ table(scCD4$final_labels)
 table(merged_seurat$final_labels)
 ```
 
+## Curated Gene Priority Table Database
+
+A curated list of optimized gene priority tables is available here:  
+🔗 [View curated submissions](curated_gene_priority_tables/README.md)
+
+
 ## Submit your own gene priority table to the community
 
 If you would like to contribute a gene priority table, please submit it using one of the following options:
