@@ -311,6 +311,14 @@ If you would like to contribute a gene priority table, please submit it using on
 ### 2. Google Form (for non-GitHub users)
 [Submit via Google Form](https://docs.google.com/forms/d/e/1FAIpQLSdzIxEG6eDaGHIuvjIFqdYfVwu7ITYvuWA0K6UQ1dy4kbSSzg/viewform?usp=sharing)
 
+## Questions or Issues?
+
+If you have a question about using this repository or want to report a bug, please open an issue:
+
+[Submit an Issue](https://github.com/jonasns/scodin/issues/new)
+
+You can view all [open issues](https://github.com/jonasns/scodin/issues) and [closed issues](https://github.com/jonasns/scodin/issues?q=is%3Aissue+is%3Aclosed).
+
 
 
 ## License
