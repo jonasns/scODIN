@@ -298,7 +298,7 @@ table(merged_seurat$final_labels)
 ## Curated Gene Priority Table Database
 
 A curated list of optimized gene priority tables is available here:  
-🔗 [View curated submissions](curated_gene_priority_tables/README.md)
+🔗 [View curated Gene Priority Table database](curated_gene_priority_tables/README.md)
 
 
 ## Submit your own gene priority table to the community
