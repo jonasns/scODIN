@@ -111,7 +111,6 @@ scData = odin_scoring(gene_priority_table = gene_priority_table,
                        accepted_doubles_table = accepted_doubles_table) 
 ```
 
-### Combining cell number and octim_score per cluster for a cluster-labeling
 **scODIN function #2 - odin_cluster_scoring**  
 Combine cell number and scODIN score for labeling cells on the cluster level  
 This function calculates a combined score based on cell number and scODIN score per cluster, and assigns the top scoring label to each cluster in the given Seurat object.
