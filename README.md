@@ -99,7 +99,7 @@ This function calculates scODIN scores for cell types based on priority genes fr
 @return A Seurat object with scODIN scores and metadata added.  
 
 ```r
-# Note the gene_priority_table has been provided to reviewers and will be made available upon paper acceptance.
+# The gene_priority_table is provided here: https://github.com/jonasns/scODIN/blob/main/curated_gene_priority_tables/CD4T_PBMC_Tulyeu.xlsx.
 gene_priority_table <- read_excel("~/Desktop/241016_TableS1_gene_priority_table.xlsx")
 accepted_doubles_table <- read_excel("~/Desktop/241016_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
 
