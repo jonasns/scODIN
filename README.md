@@ -131,7 +131,7 @@ DimPlot(scData, reduction = "umap", label = T, repel = T, group.by = 'odin_class
 
 ### Now subset to CD4 T cells
 ```{r}
-scCD4 = subset(scData, final_labels == "CD4_T")
+scCD4 = subset(scData, odin_classification == "CD4_T")
 ```
 
 ### rerun scODIN scoring on CD4 T cell level
