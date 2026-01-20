@@ -87,7 +87,8 @@ DimPlot(pbmc_3k, reduction = "umap", label = TRUE, repel = T, pt.size = 0.5, ras
 
 ### scODIN scoring on the top level
 **scODIN function #1 - odin_scoring()**  
-This function calculates scODIN scores for cell types based on priority genes from a provided gene priority table and a Seurat object with gene expression values.  
+This function calculates scODIN scores for cell types based on priority genes from a provided gene priority table and a Seurat object with gene expression values.
+The gene_priority_table is provided here: https://github.com/jonasns/scODIN/blob/main/curated_gene_priority_tables/CD4T_PBMC_Tulyeu.xlsx
 
 @param `gene_priority_table` A tibble containing gene priorities for different cell types. Usually provided in an Excel sheet.  
 @param `scData` A Seurat object containing normalized and scaled scRNA-seq gene expression data.  
@@ -99,7 +100,6 @@ This function calculates scODIN scores for cell types based on priority genes fr
 @return A Seurat object with scODIN scores and metadata added.  
 
 ```r
-# The gene_priority_table is provided here: https://github.com/jonasns/scODIN/blob/main/curated_gene_priority_tables/CD4T_PBMC_Tulyeu.xlsx.
 gene_priority_table <- read_excel("~/Desktop/241016_TableS1_gene_priority_table.xlsx")
 accepted_doubles_table <- read_excel("~/Desktop/241016_TableS1_gene_priority_table.xlsx", sheet = "accepted_doubles")
 
