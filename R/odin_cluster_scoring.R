@@ -31,7 +31,7 @@ odin_cluster_scoring <- function(scData, clustering_column = "seurat_clusters") 
     cluster_cells <- scData@meta.data[scData@meta.data[[clustering_column]] == cluster_id, ]
     
     # Calculate the scores for these cells
-    scores_per_cell <- rowSums(t(odin_score_all)[, rownames(cluster_cells)])
+    scores_per_cell <- rowSums(t(odin_score_all)[, rownames(cluster_cells), drop = FALSE])
     
     # Sort scores in decreasing order
     sorted_scores <- sort(scores_per_cell, decreasing = TRUE)
