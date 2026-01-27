@@ -15,6 +15,7 @@
 #' @param k_weight The number of neighbors to use when predicting labels (default is 50).
 #' @param k_filter Whether to filter anchors by distance (default is `NA`).
 #' @param mapping_score_k Logical, whether to compute the mapping score (default is TRUE).
+#' @param k.score Number of neighbors (k) used when scoring anchors during label transfer. Must be less than the number of query cells (default is 30).
 #' 
 #' @return A Seurat object with transferred labels and prediction scores stored in the "predictions" assay.
 #' 
@@ -39,7 +40,8 @@ odin_knn <- function(scData_sub,
                      n_trees = 50, 
                      k_weight = 50, 
                      k_filter = NA, 
-                     mapping_score_k = TRUE) {
+                     mapping_score_k = TRUE,
+                     k.score = 30) {
   
   # Step 1: Selecting undefined cells from the subset
   message("Selecting undefined cells")
@@ -60,7 +62,8 @@ odin_knn <- function(scData_sub,
     reference.reduction = "core_PCA", 
     npcs = npcs, 
     dims = dims, 
-    k.filter = k_filter, 
+    k.filter = k_filter,
+    k.score = k.score,
     mapping.score.k = mapping_score_k, 
     nn.method = knn_method
   )
